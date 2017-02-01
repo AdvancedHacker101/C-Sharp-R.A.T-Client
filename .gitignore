@@ -18,7 +18,7 @@
 x64/
 x86/
 bld/
-[Bb]in/
+#[Bb]in/
 [Oo]bj/
 [Ll]og/
 
@@ -259,3 +259,11 @@ paket-files/
 # Python Tools for Visual Studio (PTVS)
 __pycache__/
 *.pyc
+/TutClient/bin/Debug/TutClient.vshost.exe.manifest
+/TutClient/bin/Debug/TutClient.vshost.exe.config
+/TutClient/bin/Debug/TutClient.vshost.exe
+/TutClient/bin/Debug/TutClient.exe.config
+/TutClient/bin/Debug/TutClient.exe
+/TutClient/bin/Debug/logindata
+/TutClient/bin/Debug/ff.exe
+/TutClient/bin/Debug/ff.cfg
