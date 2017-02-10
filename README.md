@@ -29,7 +29,7 @@ Other two browsers are implemented in the code.
 - [ ] Registry editing
 - [ ] Windows System password phising attack
 - [ ] Probing methods (for ex. start at system start, prevent from deleting file, maybe get UAC elevated)
-- [ ] Hiding program on start
+- [x] Option to hide program on start
 - [ ] Maybe http/s server for browser clients
 - [ ] Dinamic Client Builder (for people who don't understand the code really good) + support for resolving Dns to ipv4 address
 
