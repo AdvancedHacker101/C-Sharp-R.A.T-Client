@@ -29,9 +29,9 @@ Other two browsers are implemented in the code.
 - [ ] Registry editing
 - [ ] Windows System password phising attack
 - [ ] Probing methods (for ex. start at system start, prevent from deleting file, maybe get UAC elevated)
-- [x] Option to hide program on start
+- [ ] Hiding program on start
 - [ ] Maybe http/s server for browser clients
-- [ ] Dynamic Client Builder (for people who don't understand the code really good) + support for resolving Dns to ipv4 address
+- [ ] Dinamic Client Builder (for people who don't understand the code really good) + support for resolving Dns to ipv4 address
 
 And only use this on other peoples machine if you have thier permission, otherwise you can test it on a VW (Virtul Machine)  
 This is not a dangerous virus so if you start it on your own machine and don't send any commands from the server you can safely just close the program like nothing happend  

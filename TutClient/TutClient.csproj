@@ -64,6 +64,9 @@
       <SpecificVersion>False</SpecificVersion>
       <HintPath>bin\Debug\AForge.Video.DirectShow.dll</HintPath>
     </Reference>
+    <Reference Include="appCom">
+      <HintPath>..\..\appCom\appCom\bin\Debug\appCom.dll</HintPath>
+    </Reference>
     <Reference Include="NAudio, Version=1.7.3.0, Culture=neutral, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
       <HintPath>bin\Debug\NAudio.dll</HintPath>
