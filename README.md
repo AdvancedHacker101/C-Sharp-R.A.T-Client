@@ -35,6 +35,10 @@ Other two browsers are implemented in the code.
 
 And only use this on other peoples machine if you have thier permission, otherwise you can test it on a VW (Virtul Machine)  
 This is not a dangerous virus so if you start it on your own machine and don't send any commands from the server you can safely just close the program like nothing happend  
+## More information
+You can view the project licence [here](https://github.com/AdvancedHacker101/C-Sharp-R.A.T-Client/blob/master/LICENSE)  
+You can read the code of conduct [here](https://github.com/AdvancedHacker101/C-Sharp-R.A.T-Client/blob/master/CODE_OF_CONDUCT.md)  
+You can read how to contribute [here](https://github.com/AdvancedHacker101/C-Sharp-R.A.T-Client/blob/master/CONTRIBUTING.md)  
 
 *Happy Coding!*  
 
