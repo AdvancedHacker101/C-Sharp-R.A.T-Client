@@ -23,18 +23,22 @@ Firefox password harvesting depends on NirSoft password fox.
 Other two browsers are implemented in the code.  
 **I plan to add more features like:**
 - [ ] Scripting (for automating attacks)
-- [ ] Dns Server spoofing using [c# Dns Server] (https://github.com/AdvanceHacker101/c-sharp-Dns-Server)
-- [ ] Proxy Server (for web content modification)
+- [ ] Dns Server spoofing using [c# Dns Server](https://github.com/AdvanceHacker101/c-sharp-Dns-Server)
+- [x] [Proxy Server](https://github.com/AdvancedHacker101/C-Sharp-Proxy-Server) (for web content modification)
 - [ ] Pivoting (infecting other machines in the local network)
 - [ ] Registry editing
 - [ ] Windows System password phising attack
 - [ ] Probing methods (for ex. start at system start, prevent from deleting file, maybe get UAC elevated)
-- [x] Option to hide program on start
+- [ ] Hiding program on start
 - [ ] Maybe http/s server for browser clients
 - [ ] Dynamic Client Builder (for people who don't understand the code really good) + support for resolving Dns to ipv4 address
 
 And only use this on other peoples machine if you have thier permission, otherwise you can test it on a VW (Virtul Machine)  
 This is not a dangerous virus so if you start it on your own machine and don't send any commands from the server you can safely just close the program like nothing happend  
+## More information
+You can view the project licence [here](https://github.com/AdvancedHacker101/C-Sharp-R.A.T-Client/blob/master/LICENSE)  
+You can read the code of conduct [here](https://github.com/AdvancedHacker101/C-Sharp-R.A.T-Client/blob/master/CODE_OF_CONDUCT.md)  
+You can read how to contribute [here](https://github.com/AdvancedHacker101/C-Sharp-R.A.T-Client/blob/master/CONTRIBUTING.md)  
 
 *Happy Coding!*  
 
