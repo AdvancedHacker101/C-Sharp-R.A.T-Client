@@ -1192,14 +1192,21 @@ namespace TutClient
                     ReportError(ErrorType.FILE_NOT_FOUND, "Can't download file!", "Manager is unable to locate: " + file); //Report error to the server
                     return;
                 }
-                String size = new FileInfo(file).Length.ToString(); //Get the size of the file
+                String size = (!IsLinuxServer) ? new FileInfo(file).Length.ToString() : Convert.ToBase64String(File.ReadAllBytes(file)).Length.ToString(); //Get the size of the file
                 fdl_location = file; //Store the location of the file
                 SendCommand("finfo§" + size); //Send the file's size to the server
             }
             if (text == "fconfirm") //Server confirmed to received a file
             {
                 Byte[] sendFile = File.ReadAllBytes(fdl_location); //Read the bytes of the file
-                SendByte(sendFile); //Send the file to the server
+                if (!IsLinuxServer)
+                {
+                    SendByte(sendFile); //Send the file to the server 
+                }
+                else
+                {
+                    SendCommand($"filestr{Convert.ToBase64String(sendFile)}");
+                }
             }
             if (text == "dc") //Server disconnected us
             {
@@ -2235,10 +2242,22 @@ namespace TutClient
             }
         }
 
+        private static int GetPythonLength(string data)
+        {
+            int totalLength = 0;
+
+            for (int i = 0; i < data.Length; i++)
+            {
+                totalLength += Encoding.UTF8.GetByteCount(data[i].ToString());
+            }
+
+            return totalLength;
+        }
+
         private static string SSLFormatCommand(string command)
         {
             command = command.Replace("\\", "\\\\");
-            string cmdLength = command.Length.ToString();
+            string cmdLength = GetPythonLength(command).ToString();
             const string pattern = "!??!%";
             return $"{cmdLength}{pattern}{command}";
         }
