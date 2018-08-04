@@ -304,7 +304,7 @@ namespace TutClient
         private static ProcessData ipcProcess;
         private static string getScreens; //get screens count
         public static int ScreenNumber = 0;
-        public static bool IsLinuxServer = true;
+        public static bool IsLinuxServer = false;
         public static SslStream _sslClient;
 
         /// <summary>
