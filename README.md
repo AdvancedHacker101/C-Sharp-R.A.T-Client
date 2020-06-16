@@ -23,7 +23,7 @@ Firefox password harvesting depends on NirSoft password fox.
 Other two browsers are implemented in the code.  
 **I plan to add more features like:**
 - [x] Scripting (Server side plugins can do this)
-- [ ] Dns Server spoofing using [c# Dns Server](https://github.com/AdvanceHacker101/c-sharp-Dns-Server)
+- [ ] Dns Server spoofing using [c# Dns Server](https://github.com/AdvancedHacker101/c-sharp-Dns-Server)
 - [x] [Proxy Server](https://github.com/AdvancedHacker101/C-Sharp-Proxy-Server) (for web content modification)
 - [ ] Pivoting (infecting other machines in the local network)
 - [ ] Registry editing
